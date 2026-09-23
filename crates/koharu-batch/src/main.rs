@@ -136,6 +136,38 @@ enum ModelsAction {
         /// Model to release; every loaded model when omitted.
         model: Option<String>,
     },
+
+    /// Show the suggested models and whether they are installed.
+    Catalog {
+        /// Restrict to models suited to a task: traducir or corregir.
+        #[arg(long)]
+        task: Option<String>,
+    },
+
+    /// Fetch a catalog model into the LM Studio library.
+    Download {
+        /// Catalog identifier, as `khr models catalog` prints it.
+        id: String,
+    },
+
+    /// Delete a model's weights from disk.
+    Remove {
+        /// Catalog identifier, or part of an installed file name.
+        id: String,
+    },
+
+    /// Add a .gguf obtained elsewhere to the LM Studio library.
+    Import {
+        file: PathBuf,
+
+        /// Publisher directory to file it under.
+        #[arg(long, default_value = "local")]
+        publisher: String,
+
+        /// Repository directory; taken from the file name when omitted.
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 /// Writes each finished stage back into the open session.
@@ -940,6 +972,211 @@ async fn models(action: ModelsAction) -> Result<()> {
             };
             println!("{}", clean_output(&raw));
         }
+        ModelsAction::Catalog { task } => show_catalog(task.as_deref())?,
+        ModelsAction::Download { id } => download_model(&id).await?,
+        ModelsAction::Remove { id } => remove_model(&id)?,
+        ModelsAction::Import {
+            file,
+            publisher,
+            name,
+        } => import_model(&file, &publisher, name)?,
     }
+    Ok(())
+}
+
+/// Suggested models, shipped with the binary so the catalog is available
+/// offline and stays versioned with the code that reads it.
+const MODEL_CATALOG: &str = include_str!("../assets/model-catalog.json");
+
+#[derive(serde::Deserialize)]
+struct CatalogEntry {
+    id: String,
+    repo: String,
+    archivo: String,
+    gb: f64,
+    tareas: Vec<String>,
+    #[serde(default)]
+    medido: BTreeMap<String, String>,
+    nota: String,
+}
+
+#[derive(serde::Deserialize)]
+struct Catalog {
+    modelos: Vec<CatalogEntry>,
+}
+
+fn catalog() -> Result<Catalog> {
+    serde_json::from_str(MODEL_CATALOG).context("the bundled model catalog is malformed")
+}
+
+/// Where LM Studio expects a model: a publisher directory holding the weights.
+fn models_root() -> Result<PathBuf> {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .context("could not locate the user profile")?;
+    Ok(PathBuf::from(home).join(".lmstudio").join("models"))
+}
+
+fn installed_path(entry: &CatalogEntry) -> Result<PathBuf> {
+    let (publisher, repository) = entry
+        .repo
+        .split_once('/')
+        .context("catalog entries use publisher/repository")?;
+    Ok(models_root()?.join(publisher).join(repository).join(&entry.archivo))
+}
+
+fn show_catalog(task: Option<&str>) -> Result<()> {
+    let catalog = catalog()?;
+    for entry in &catalog.modelos {
+        if let Some(task) = task
+            && !entry.tareas.iter().any(|value| value == task)
+        {
+            continue;
+        }
+        let installed = installed_path(entry).map(|path| path.exists()).unwrap_or(false);
+        println!(
+            "{}  [{}]  {:.1} GB  {}",
+            entry.id,
+            entry.tareas.join(", "),
+            entry.gb,
+            if installed { "INSTALADO" } else { "" }
+        );
+        for (task, verdict) in &entry.medido {
+            println!("    medido ({task}): {verdict}");
+        }
+        println!("    {}", entry.nota);
+    }
+    Ok(())
+}
+
+async fn download_model(id: &str) -> Result<()> {
+    let catalog = catalog()?;
+    let entry = catalog
+        .modelos
+        .iter()
+        .find(|entry| entry.id == id)
+        .with_context(|| format!("`{id}` is not in the catalog; run `khr models catalog`"))?;
+    let target = installed_path(entry)?;
+    if target.exists() {
+        eprintln!("{} is already installed at {}", entry.id, target.display());
+        return Ok(());
+    }
+    std::fs::create_dir_all(target.parent().expect("the path has a parent"))?;
+
+    let url = format!(
+        "https://huggingface.co/{}/resolve/main/{}",
+        entry.repo, entry.archivo
+    );
+    eprintln!("downloading {} ({:.1} GB)", entry.id, entry.gb);
+    eprintln!("  from {url}");
+
+    // Download beside the target and rename once complete, so an interrupted
+    // transfer never leaves a half-written file that looks installed.
+    let partial = target.with_extension("part");
+    let response = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("request to {url} failed"))?
+        .error_for_status()
+        .context("the download was refused")?;
+    let bytes = response.bytes().await.context("the transfer failed")?;
+    std::fs::write(&partial, &bytes)
+        .with_context(|| format!("failed to write {}", partial.display()))?;
+    std::fs::rename(&partial, &target)?;
+    eprintln!(
+        "installed {} ({:.2} GB) at {}",
+        entry.id,
+        bytes.len() as f64 / 1_073_741_824.0,
+        target.display()
+    );
+    Ok(())
+}
+
+fn remove_model(id: &str) -> Result<()> {
+    let catalog = catalog()?;
+    // A catalog entry names its file exactly; anything else is matched by
+    // scanning, so models imported by hand can be removed too.
+    if let Some(entry) = catalog.modelos.iter().find(|entry| entry.id == id) {
+        let path = installed_path(entry)?;
+        anyhow::ensure!(path.exists(), "{id} is not installed");
+        let size = std::fs::metadata(&path)?.len();
+        std::fs::remove_file(&path)?;
+        let _ = std::fs::remove_dir(path.parent().expect("the path has a parent"));
+        eprintln!(
+            "removed {id} ({:.2} GB) from {}",
+            size as f64 / 1_073_741_824.0,
+            path.display()
+        );
+        return Ok(());
+    }
+
+    let root = models_root()?;
+    let mut found = Vec::new();
+    for publisher in std::fs::read_dir(&root)? {
+        let publisher = publisher?.path();
+        if !publisher.is_dir() {
+            continue;
+        }
+        for repository in std::fs::read_dir(&publisher)? {
+            let repository = repository?.path();
+            if !repository.is_dir() {
+                continue;
+            }
+            for file in std::fs::read_dir(&repository)? {
+                let file = file?.path();
+                let name = file.file_name().and_then(|name| name.to_str()).unwrap_or("");
+                if name.to_ascii_lowercase().contains(&id.to_ascii_lowercase()) {
+                    found.push(file);
+                }
+            }
+        }
+    }
+    anyhow::ensure!(!found.is_empty(), "no installed model matches `{id}`");
+    anyhow::ensure!(
+        found.len() == 1,
+        "`{id}` matches {} files; use a more specific name",
+        found.len()
+    );
+    let path = &found[0];
+    let size = std::fs::metadata(path)?.len();
+    std::fs::remove_file(path)?;
+    let _ = std::fs::remove_dir(path.parent().expect("the path has a parent"));
+    eprintln!(
+        "removed {:.2} GB from {}",
+        size as f64 / 1_073_741_824.0,
+        path.display()
+    );
+    Ok(())
+}
+
+fn import_model(file: &PathBuf, publisher: &str, name: Option<String>) -> Result<()> {
+    anyhow::ensure!(file.exists(), "{} does not exist", file.display());
+    anyhow::ensure!(
+        file.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("gguf")),
+        "only .gguf weights can be imported"
+    );
+    let stem = file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .context("the file has no usable name")?;
+    let repository = name.unwrap_or_else(|| stem.to_owned());
+    let directory = models_root()?.join(publisher).join(&repository);
+    std::fs::create_dir_all(&directory)?;
+    let target = directory.join(file.file_name().expect("the file has a name"));
+    anyhow::ensure!(!target.exists(), "{} already exists", target.display());
+
+    // Try a hard link first: the weights are several gigabytes and a link keeps
+    // one copy on disk. It only works within a volume, so a copy is the
+    // fallback.
+    match std::fs::hard_link(file, &target) {
+        Ok(()) => eprintln!("linked {} (no extra disk use)", target.display()),
+        Err(_) => {
+            std::fs::copy(file, &target)
+                .with_context(|| format!("failed to copy into {}", target.display()))?;
+            eprintln!("copied to {}", target.display());
+        }
+    }
+    eprintln!("restart LM Studio if it does not list it yet");
     Ok(())
 }

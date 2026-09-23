@@ -1,0 +1,155 @@
+{
+  "_nota": "Casos de prueba para evaluar modelos traductores y correctores. Cada caso lleva el texto de partida (ref), una version en espanol con el fallo tipico (es), y una comprobacion sobre la salida esperada. 'contiene' exige alguna de las variantes; 'no_contiene' las prohibe; 'igual' exige que el texto no se altere.",
+
+  "en": [
+    {
+      "es": "Me estoy por ir!",
+      "ref": "I'M COMING!",
+      "check": "contiene",
+      "value": ["veng", "venir", "acab", "corr"],
+      "trampa": "coming sexual, no desplazamiento"
+    },
+    {
+      "es": "Algo dure me aprieta.",
+      "ref": "SOMETHING HARD IS PRESSING AGAINST ME.",
+      "check": "contiene",
+      "value": ["duro"],
+      "trampa": "hard es adjetivo, no forma verbal"
+    },
+    {
+      "es": "Me estoy voy.",
+      "ref": "I'M LEAVING NOW.",
+      "check": "contiene",
+      "value": ["me voy", "yendo"],
+      "trampa": "perifrasis rota: nunca 'me estoy voy'"
+    },
+    {
+      "es": "Vosotros sois tontos.",
+      "ref": "YOU GUYS ARE DUMB.",
+      "check": "no_contiene",
+      "value": ["vosotros", "sois"],
+      "trampa": "peninsular a latino neutro"
+    },
+    {
+      "es": "Me pesa contra la espalda.",
+      "ref": "IT'S PRESSING AGAINST MY BACK.",
+      "check": "no_contiene",
+      "value": ["pesa", "pesar"],
+      "trampa": "pressing es presionar, no pesar"
+    }
+  ],
+
+  "ja": [
+    {
+      "es": "Ya voy!",
+      "ref": "いくっ！いくっ！",
+      "check": "contiene",
+      "value": ["veng", "venir", "acab", "corr"],
+      "trampa": "iku sexual, no desplazamiento"
+    },
+    {
+      "es": "Hermano mayor, para.",
+      "ref": "お兄ちゃん、やめて。",
+      "check": "contiene",
+      "value": ["onii", "nii", "hermano"],
+      "trampa": "honorifico: conservarlo o traducirlo, pero no omitirlo"
+    },
+    {
+      "es": "Es inutil.",
+      "ref": "だめってば。",
+      "check": "no_contiene",
+      "value": ["inutil", "inútil"],
+      "trampa": "dame aqui es 'no' o 'basta', no 'inutil'"
+    },
+    {
+      "es": "Se siente comodo.",
+      "ref": "気持ちいい…",
+      "check": "no_contiene",
+      "value": ["comodo", "cómodo"],
+      "trampa": "kimochi ii es placer, no comodidad"
+    },
+    {
+      "es": "Doki doki",
+      "ref": "ドキドキ",
+      "check": "no_contiene",
+      "value": ["doki"],
+      "trampa": "onomatopeya: llevarla a un equivalente en espanol"
+    }
+  ],
+
+  "ko": [
+    {
+      "es": "Parecia que todo seria facil...",
+      "ref": "앞으로도순조로울것 같았는데…",
+      "check": "no_contiene",
+      "value": ["facil", "fácil"],
+      "trampa": "sunjoroptda es 'ir bien', no 'facil'; ademas el OCR vino sin espacios"
+    },
+    {
+      "es": "Parecia que iba a ir bien.",
+      "ref": "앞으로도 순조로울 것 같았는데…",
+      "check": "contiene",
+      "value": ["adelante", "ahora en", "futuro", "también", "tambien"],
+      "trampa": "la particula do (tambien) y apeuro (de ahora en adelante) no se pueden omitir"
+    },
+    {
+      "es": "Voy a salir.",
+      "ref": "나 싸요…",
+      "check": "contiene",
+      "value": ["veng", "venir", "acab", "corr"],
+      "trampa": "ssada coloquial es eyacular, no salir"
+    },
+    {
+      "es": "Encontramos la cama.",
+      "ref": "방침대",
+      "check": "no_contiene",
+      "value": ["encontramos", "descubrimos"],
+      "trampa": "no inventar verbos que el original no trae"
+    },
+    {
+      "es": "Oye, hermano.",
+      "ref": "오빠…",
+      "check": "contiene",
+      "value": ["oppa", "hermano"],
+      "trampa": "oppa: conservarlo o traducirlo, pero con criterio constante"
+    }
+  ],
+
+  "zh": [
+    {
+      "es": "Ya me voy.",
+      "ref": "我要去了！",
+      "check": "contiene",
+      "value": ["veng", "venir", "acab", "corr"],
+      "trampa": "en escena sexual no es marcharse"
+    },
+    {
+      "es": "Hermano.",
+      "ref": "哥哥…",
+      "check": "contiene",
+      "value": ["hermano"],
+      "trampa": "gege es hermano mayor: no perder la jerarquia"
+    },
+    {
+      "es": "Estoy comodo.",
+      "ref": "好舒服…",
+      "check": "no_contiene",
+      "value": ["comodo", "cómodo"],
+      "trampa": "shufu aqui es placer fisico"
+    },
+    {
+      "es": "Una pieza de persona.",
+      "ref": "一个人",
+      "check": "no_contiene",
+      "value": ["pieza"],
+      "trampa": "los clasificadores no se traducen literalmente"
+    },
+    {
+      "es": "Vamos.",
+      "ref": "走吧。",
+      "check": "contiene",
+      "value": ["vamos", "vámonos", "andando"],
+      "trampa": "la particula ba marca sugerencia, no orden"
+    }
+  ]
+}
