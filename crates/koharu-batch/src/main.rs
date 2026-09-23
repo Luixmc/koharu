@@ -14,8 +14,10 @@ use clap::{Parser, Subcommand};
 use koharu_pipeline::{
     Committer, Pipeline, PipelineConfig, Progress, Request, Scope, Stage, StageOutput,
 };
-use koharu_scene::{Session, SourceText, Translation};
-use koharu_translator::ProvidersConfig;
+use koharu_scene::{Authored, Session, SourceText, Translation};
+use koharu_translator::{
+    GenerationConfig, ModelSelection, ProvidersConfig, TranslationRequest, Translator,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "khr", version, about = "Headless tooling for Koharu projects")]
@@ -38,6 +40,40 @@ enum Command {
         /// Emit JSON instead of a readable report.
         #[arg(long)]
         json: bool,
+    },
+
+    /// Rewrite existing translations with a corrector model.
+    Post {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+
+        /// Limit to the first N pages.
+        #[arg(long, value_name = "N")]
+        pages: Option<usize>,
+
+        /// Translation provider hosting the corrector.
+        #[arg(long, default_value = "lm-studio")]
+        provider: String,
+
+        /// Corrector model identifier.
+        #[arg(long)]
+        model: Option<String>,
+
+        /// File holding the correction instructions.
+        #[arg(long, value_name = "FILE")]
+        instructions: Option<PathBuf>,
+
+        /// Blocks sent per request.
+        #[arg(long, default_value_t = 8)]
+        batch: usize,
+
+        /// Report changes without writing them.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Force CPU execution.
+        #[arg(long)]
+        cpu: bool,
     },
 
     /// Run pipeline stages over a project, writing results back into it.
@@ -189,6 +225,28 @@ async fn main() -> Result<()> {
             pages,
             cpu,
         } => run(&project, &stages, pages, cpu).await,
+        Command::Post {
+            project,
+            pages,
+            provider,
+            model,
+            instructions,
+            batch,
+            dry_run,
+            cpu,
+        } => {
+            post(
+                &project,
+                pages,
+                &provider,
+                model,
+                instructions,
+                batch,
+                dry_run,
+                cpu,
+            )
+            .await
+        }
     }
 }
 
@@ -316,5 +374,148 @@ async fn dump(project: &PathBuf, limit: Option<usize>, json: bool) -> Result<()>
             }
         }
     }
+    Ok(())
+}
+
+/// Pairs the original with its translation for the corrector.
+///
+/// The corrector needs both: wording that a machine translation softened or
+/// dropped cannot be recovered from the translation alone.
+fn correction_segment(source: &str, translation: &str) -> String {
+    format!("[ORIGINAL]\n{source}\n[TRADUCCION]\n{translation}")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn post(
+    project: &PathBuf,
+    limit: Option<usize>,
+    provider: &str,
+    model: Option<String>,
+    instructions: Option<PathBuf>,
+    batch: usize,
+    dry_run: bool,
+    cpu: bool,
+) -> Result<()> {
+    anyhow::ensure!(batch > 0, "batch size must be at least 1");
+
+    let instructions = match instructions {
+        Some(path) => Some(
+            std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?,
+        ),
+        None => None,
+    };
+
+    let mut session = Session::open(project)
+        .await
+        .with_context(|| format!("failed to open {}", project.display()))?;
+    let snapshot = session.snapshot();
+
+    let allowed = limit.map(|limit| {
+        snapshot
+            .pages()
+            .take(limit)
+            .map(|page| page.id())
+            .collect::<std::collections::BTreeSet<_>>()
+    });
+
+    // Only entities carrying both texts qualify: the corrector rewrites an
+    // existing translation and never creates one.
+    let mut pending = Vec::new();
+    for entity in snapshot.entities_with::<SourceText>()? {
+        let id = entity.id();
+        let content = snapshot.text_content(id)?;
+        let (Some(source), Some(translation)) = (content.source()?, content.translation()?) else {
+            continue;
+        };
+        if let Some(allowed) = &allowed {
+            let mut cursor = Some(id);
+            let mut inside = false;
+            while let Some(current) = cursor {
+                if allowed.contains(&current) {
+                    inside = true;
+                    break;
+                }
+                cursor = snapshot.parent(current)?;
+            }
+            if !inside {
+                continue;
+            }
+        }
+        pending.push((id, source.text.value, translation));
+    }
+
+    if pending.is_empty() {
+        eprintln!("nothing to correct: no entity carries both a source text and a translation");
+        return Ok(());
+    }
+    eprintln!("correcting {} block(s) in batches of {batch}", pending.len());
+
+    let pipeline_config = koharu_config::load::<PipelineConfig>("pipeline")?;
+    let target_language = pipeline_config.read()?.translation.target_language;
+    let selection = ModelSelection {
+        provider: provider
+            .parse()
+            .map_err(|_| anyhow::anyhow!("unknown provider `{provider}`"))?,
+        model,
+        quantization: None,
+        vision: false,
+        reasoning: false,
+    };
+    let translator = Translator::from_config(
+        koharu_ml::device(cpu),
+        koharu_config::load::<ProvidersConfig>("providers")?,
+    )?;
+
+    let mut corrected = Vec::new();
+    for (index, chunk) in pending.chunks(batch).enumerate() {
+        let segments: Vec<String> = chunk
+            .iter()
+            .map(|(_, source, translation)| correction_segment(source, &translation.text.value))
+            .collect();
+        let mut request = TranslationRequest::new(segments, target_language);
+        request.instructions = instructions.clone();
+
+        let (_, results) = translator
+            .translate(&selection, GenerationConfig::default(), request)
+            .await
+            .with_context(|| format!("correction batch {index} failed"))?;
+        eprintln!("  batch {index}: {} block(s)", results.len());
+        for ((id, _, translation), result) in chunk.iter().zip(results) {
+            corrected.push((*id, translation.clone(), result));
+        }
+    }
+
+    let changed = corrected
+        .iter()
+        .filter(|(_, previous, result)| previous.text.value.trim() != result.trim())
+        .count();
+    eprintln!("{changed} of {} block(s) changed", corrected.len());
+
+    if dry_run {
+        eprintln!("dry run: the project was not modified");
+        return Ok(());
+    }
+
+    let patch = session.snapshot().patch(|edit| {
+        for (id, previous, result) in &corrected {
+            if previous.text.value.trim() == result.trim() {
+                continue;
+            }
+            edit.set(
+                *id,
+                &Translation {
+                    text: Authored {
+                        value: result.clone(),
+                        origin: previous.text.origin.clone(),
+                    },
+                    language: previous.language.clone(),
+                },
+            )?;
+        }
+        Ok(())
+    })?;
+    session.commit(patch).await?;
+    eprintln!("wrote {changed} correction(s) to {}", project.display());
     Ok(())
 }
