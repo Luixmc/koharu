@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
-use koharu_config::Config;
 use koharu_pipeline::{
     Committer, Pipeline, PipelineConfig, Progress, Request, Scope, Stage, StageOutput,
 };
@@ -139,9 +138,12 @@ async fn run(project: &PathBuf, stages: &str, limit: Option<usize>, cpu: bool) -
     let total = Instant::now();
     for stage in stages {
         let started = Instant::now();
+        // Load the same configuration the desktop application reads, so stages
+        // run with the selected models, prompts and provider credentials
+        // instead of defaults.
         let pipeline = Pipeline::from_config(
-            Config::memory(PipelineConfig::default()),
-            Config::memory(ProvidersConfig::default()),
+            koharu_config::load::<PipelineConfig>("pipeline")?,
+            koharu_config::load::<ProvidersConfig>("providers")?,
             koharu_ml::device(cpu),
         )?;
         let snapshot = session.snapshot();
