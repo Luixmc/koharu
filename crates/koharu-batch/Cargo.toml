@@ -24,6 +24,7 @@ koharu-ml = { workspace = true }
 koharu-pipeline = { workspace = true }
 koharu-scene = { workspace = true }
 koharu-translator = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

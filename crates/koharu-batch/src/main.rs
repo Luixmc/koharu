@@ -15,9 +15,7 @@ use koharu_pipeline::{
     Committer, Pipeline, PipelineConfig, Progress, Request, Scope, Stage, StageOutput,
 };
 use koharu_scene::{Authored, Session, SourceText, Translation};
-use koharu_translator::{
-    GenerationConfig, ModelSelection, ProvidersConfig, TranslationRequest, Translator,
-};
+use koharu_translator::ProvidersConfig;
 
 #[derive(Debug, Parser)]
 #[command(name = "khr", version, about = "Headless tooling for Koharu projects")]
@@ -51,17 +49,17 @@ enum Command {
         #[arg(long, value_name = "N")]
         pages: Option<usize>,
 
-        /// Translation provider hosting the corrector.
-        #[arg(long, default_value = "lm-studio")]
-        provider: String,
+        /// Base URL of the OpenAI-compatible server hosting the corrector.
+        #[arg(long, default_value = "http://localhost:1234")]
+        base_url: String,
 
-        /// Corrector model identifier.
+        /// Corrector model identifier, as the server reports it.
         #[arg(long)]
-        model: Option<String>,
+        model: String,
 
         /// File holding the correction instructions.
         #[arg(long, value_name = "FILE")]
-        instructions: Option<PathBuf>,
+        instructions: PathBuf,
 
         /// Blocks sent per request.
         #[arg(long, default_value_t = 8)]
@@ -70,10 +68,6 @@ enum Command {
         /// Report changes without writing them.
         #[arg(long)]
         dry_run: bool,
-
-        /// Force CPU execution.
-        #[arg(long)]
-        cpu: bool,
     },
 
     /// Run pipeline stages over a project, writing results back into it.
@@ -228,22 +222,20 @@ async fn main() -> Result<()> {
         Command::Post {
             project,
             pages,
-            provider,
+            base_url,
             model,
             instructions,
             batch,
             dry_run,
-            cpu,
         } => {
             post(
                 &project,
                 pages,
-                &provider,
-                model,
+                &base_url,
+                &model,
                 instructions,
                 batch,
                 dry_run,
-                cpu,
             )
             .await
         }
@@ -377,34 +369,102 @@ async fn dump(project: &PathBuf, limit: Option<usize>, json: bool) -> Result<()>
     Ok(())
 }
 
-/// Pairs the original with its translation for the corrector.
+/// Tells the corrector how to frame a batch.
 ///
-/// The corrector needs both: wording that a machine translation softened or
-/// dropped cannot be recovered from the translation alone.
-fn correction_segment(source: &str, translation: &str) -> String {
-    format!("[ORIGINAL]\n{source}\n[TRADUCCION]\n{translation}")
+/// The correction prompt describes the editorial task; this appendix only fixes
+/// the wire format. Both travel in the system message so the model never sees
+/// the framing mixed into the text it must edit, which is what let an earlier
+/// in-band marker leak into the replies.
+const FORMAT_APPENDIX: &str = "\n\nFORMATO DE INTERCAMBIO\n\
+Recibes un objeto JSON con la clave \"bloques\". Cada bloque trae \"id\", \
+\"original\" (el texto de partida) y \"traduccion\" (la version a corregir).\n\
+Responde UNICAMENTE con un objeto JSON con la clave \"bloques\", donde cada \
+elemento trae \"id\" y \"correccion\".\n\
+Devuelve exactamente un elemento por cada bloque recibido y conserva su \"id\".\n\
+Si un bloque ya esta correcto, repite su texto en \"correccion\".\n\
+No escribas nada fuera del objeto JSON.";
+
+#[derive(serde::Serialize)]
+struct ChatMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+#[derive(serde::Serialize)]
+struct ChatRequest<'a> {
+    model: &'a str,
+    messages: Vec<ChatMessage<'a>>,
+    temperature: f32,
+    stream: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
+}
+
+#[derive(serde::Deserialize)]
+struct ChatChoice {
+    message: ChatContent,
+}
+
+#[derive(serde::Deserialize)]
+struct ChatContent {
+    content: String,
+}
+
+#[derive(serde::Deserialize)]
+struct CorrectionBatch {
+    bloques: Vec<CorrectionItem>,
+}
+
+#[derive(serde::Deserialize)]
+struct CorrectionItem {
+    id: usize,
+    correccion: String,
+}
+
+/// Rejects a reply that cannot be an edit of the given translation.
+///
+/// A corrector that collapses a block to a fraction of its length, answers with
+/// an empty string, or echoes a bracketed label has failed to follow the format
+/// rather than improved the text. Writing such a reply would replace a usable
+/// translation with noise, so it is dropped and reported.
+fn plausible_correction(previous: &str, candidate: &str) -> bool {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return false;
+    }
+    if candidate.starts_with('[') && candidate.ends_with(']') {
+        return false;
+    }
+    let previous_length = previous.trim().chars().count();
+    let candidate_length = candidate.chars().count();
+    // Short blocks legitimately change length a lot; long ones should not.
+    previous_length < 12 || candidate_length.saturating_mul(3) >= previous_length
+}
+
+/// Extracts the JSON object from a reply that may be wrapped in prose or fences.
+fn extract_json(reply: &str) -> Option<&str> {
+    let start = reply.find('{')?;
+    let end = reply.rfind('}')?;
+    (end > start).then(|| &reply[start..=end])
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn post(
     project: &PathBuf,
     limit: Option<usize>,
-    provider: &str,
-    model: Option<String>,
-    instructions: Option<PathBuf>,
+    base_url: &str,
+    model: &str,
+    instructions: PathBuf,
     batch: usize,
     dry_run: bool,
-    cpu: bool,
 ) -> Result<()> {
     anyhow::ensure!(batch > 0, "batch size must be at least 1");
-
-    let instructions = match instructions {
-        Some(path) => Some(
-            std::fs::read_to_string(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?,
-        ),
-        None => None,
-    };
+    let instructions = std::fs::read_to_string(&instructions)
+        .with_context(|| format!("failed to read {}", instructions.display()))?;
+    let system = format!("{}{FORMAT_APPENDIX}", instructions.trim());
 
     let mut session = Session::open(project)
         .await
@@ -451,62 +511,114 @@ async fn post(
     }
     eprintln!("correcting {} block(s) in batches of {batch}", pending.len());
 
-    let pipeline_config = koharu_config::load::<PipelineConfig>("pipeline")?;
-    let target_language = pipeline_config.read()?.translation.target_language;
-    let selection = ModelSelection {
-        provider: provider
-            .parse()
-            .map_err(|_| anyhow::anyhow!("unknown provider `{provider}`"))?,
-        model,
-        quantization: None,
-        vision: false,
-        reasoning: false,
-    };
-    let translator = Translator::from_config(
-        koharu_ml::device(cpu),
-        koharu_config::load::<ProvidersConfig>("providers")?,
-    )?;
+    let client = reqwest::Client::new();
+    let endpoint = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
 
-    let mut corrected = Vec::new();
+    let mut accepted = Vec::new();
+    let mut rejected = 0_usize;
     for (index, chunk) in pending.chunks(batch).enumerate() {
-        let segments: Vec<String> = chunk
-            .iter()
-            .map(|(_, source, translation)| correction_segment(source, &translation.text.value))
-            .collect();
-        let mut request = TranslationRequest::new(segments, target_language);
-        request.instructions = instructions.clone();
+        let payload = serde_json::json!({
+            "bloques": chunk
+                .iter()
+                .enumerate()
+                .map(|(id, (_, source, translation))| serde_json::json!({
+                    "id": id,
+                    "original": source,
+                    "traduccion": translation.text.value,
+                }))
+                .collect::<Vec<_>>(),
+        });
+        let user = serde_json::to_string(&payload)?;
+        let request = ChatRequest {
+            model,
+            messages: vec![
+                ChatMessage {
+                    role: "system",
+                    content: &system,
+                },
+                ChatMessage {
+                    role: "user",
+                    content: &user,
+                },
+            ],
+            temperature: 0.2,
+            stream: false,
+        };
 
-        let (_, results) = translator
-            .translate(&selection, GenerationConfig::default(), request)
+        let response: ChatResponse = client
+            .post(&endpoint)
+            .json(&request)
+            .send()
             .await
-            .with_context(|| format!("correction batch {index} failed"))?;
-        eprintln!("  batch {index}: {} block(s)", results.len());
-        for ((id, _, translation), result) in chunk.iter().zip(results) {
-            corrected.push((*id, translation.clone(), result));
+            .with_context(|| format!("batch {index}: request to {endpoint} failed"))?
+            .error_for_status()
+            .with_context(|| format!("batch {index}: the corrector returned an error"))?
+            .json()
+            .await
+            .with_context(|| format!("batch {index}: malformed response"))?;
+
+        let reply = response
+            .choices
+            .first()
+            .map(|choice| choice.message.content.as_str())
+            .unwrap_or_default();
+        let Some(json) = extract_json(reply) else {
+            eprintln!("  batch {index}: reply contained no JSON object, skipped");
+            rejected += chunk.len();
+            continue;
+        };
+        let parsed: CorrectionBatch = match serde_json::from_str(json) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                eprintln!("  batch {index}: unparsable reply ({error}), skipped");
+                rejected += chunk.len();
+                continue;
+            }
+        };
+
+        let mut applied = 0_usize;
+        for item in parsed.bloques {
+            let Some((id, _, translation)) = chunk.get(item.id) else {
+                continue;
+            };
+            let previous = &translation.text.value;
+            if !plausible_correction(previous, &item.correccion) {
+                rejected += 1;
+                continue;
+            }
+            if previous.trim() == item.correccion.trim() {
+                continue;
+            }
+            accepted.push((*id, translation.clone(), item.correccion));
+            applied += 1;
         }
+        eprintln!("  batch {index}: {applied} correction(s) of {}", chunk.len());
     }
 
-    let changed = corrected
-        .iter()
-        .filter(|(_, previous, result)| previous.text.value.trim() != result.trim())
-        .count();
-    eprintln!("{changed} of {} block(s) changed", corrected.len());
+    eprintln!(
+        "{} correction(s) accepted, {rejected} rejected as implausible",
+        accepted.len()
+    );
 
     if dry_run {
+        for (_, previous, candidate) in &accepted {
+            println!("- {}", previous.text.value.replace('\n', " / "));
+            println!("+ {}", candidate.replace('\n', " / "));
+        }
         eprintln!("dry run: the project was not modified");
+        return Ok(());
+    }
+    if accepted.is_empty() {
         return Ok(());
     }
 
     let patch = session.snapshot().patch(|edit| {
-        for (id, previous, result) in &corrected {
-            if previous.text.value.trim() == result.trim() {
-                continue;
-            }
+        for (id, previous, candidate) in &accepted {
             edit.set(
                 *id,
                 &Translation {
                     text: Authored {
-                        value: result.clone(),
+                        value: candidate.clone(),
                         origin: previous.text.origin.clone(),
                     },
                     language: previous.language.clone(),
@@ -516,6 +628,10 @@ async fn post(
         Ok(())
     })?;
     session.commit(patch).await?;
-    eprintln!("wrote {changed} correction(s) to {}", project.display());
+    eprintln!(
+        "wrote {} correction(s) to {}",
+        accepted.len(),
+        project.display()
+    );
     Ok(())
 }
