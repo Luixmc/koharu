@@ -3,6 +3,7 @@
 //! Reads and writes the same `.khrproj` format as the desktop application, so a
 //! project can move between this tool and the editor without conversion.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use std::sync::Arc;
@@ -197,10 +198,20 @@ struct DumpedText {
 }
 
 #[derive(serde::Serialize)]
+struct DumpedPage {
+    index: usize,
+    label: String,
+    texts: Vec<DumpedText>,
+}
+
+#[derive(serde::Serialize)]
 struct DumpReport {
     project: String,
     pages: usize,
-    texts: Vec<DumpedText>,
+    shown: usize,
+    texts: usize,
+    outside: usize,
+    page_list: Vec<DumpedPage>,
 }
 
 async fn dump(project: &PathBuf, limit: Option<usize>, json: bool) -> Result<()> {
@@ -208,47 +219,99 @@ async fn dump(project: &PathBuf, limit: Option<usize>, json: bool) -> Result<()>
         .await
         .with_context(|| format!("failed to open {}", project.display()))?;
     let snapshot = session.snapshot();
+    let total_pages = snapshot.pages().len();
 
-    let page_count = snapshot.pages().len();
-    let _ = limit;
+    let mut pages: Vec<DumpedPage> = Vec::new();
+    let mut index_of = BTreeMap::new();
+    for (index, page) in snapshot.pages().enumerate() {
+        if limit.is_some_and(|limit| index >= limit) {
+            break;
+        }
+        index_of.insert(page.id(), index);
+        pages.push(DumpedPage {
+            index,
+            label: page.page()?.label,
+            texts: Vec::new(),
+        });
+    }
 
-    let mut texts = Vec::new();
+    // Text lives on its own entity, so walk up the hierarchy until a page is
+    // reached. Text whose ancestors hold no listed page sits outside the
+    // requested window; counting it separately keeps a page filtered out by
+    // --pages distinguishable from a page that produced nothing.
+    let mut outside = 0_usize;
+    let mut total_texts = 0_usize;
     for entity in snapshot.entities_with::<SourceText>()? {
         let id = entity.id();
         let content = snapshot.text_content(id)?;
         let Some(source) = content.source()? else {
             continue;
         };
-        let translation = content.translation()?.map(|value: Translation| value.text.value);
-        texts.push(DumpedText {
+        total_texts += 1;
+        let text = DumpedText {
             entity: format!("{id:?}"),
             source: source.text.value,
-            translation,
-        });
+            translation: content
+                .translation()?
+                .map(|value: Translation| value.text.value),
+        };
+
+        let mut cursor = Some(id);
+        let mut placed = false;
+        while let Some(current) = cursor {
+            if let Some(&index) = index_of.get(&current) {
+                pages[index].texts.push(text);
+                placed = true;
+                break;
+            }
+            cursor = snapshot.parent(current)?;
+        }
+        if !placed {
+            outside += 1;
+        }
     }
+
+    let shown: usize = pages.iter().map(|page| page.texts.len()).sum();
 
     if json {
         let report = DumpReport {
             project: project.display().to_string(),
-            pages: page_count,
-            texts,
+            pages: total_pages,
+            shown,
+            texts: total_texts,
+            outside,
+            page_list: pages,
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
-    let translated = texts.iter().filter(|t| t.translation.is_some()).count();
-    let empty = texts.iter().filter(|t| t.source.trim().is_empty()).count();
-    println!("project:     {}", project.display());
-    println!("pages:       {page_count}");
-    println!("text blocks: {}", texts.len());
-    println!("translated:  {translated}");
-    println!("empty OCR:   {empty}");
+    println!("project: {}", project.display());
+    println!("pages:   {total_pages} total, {} shown", pages.len());
+    println!("texts:   {total_texts} total, {shown} in shown pages, {outside} outside");
     println!();
-    for (index, text) in texts.iter().enumerate() {
-        println!("[{index}] {}", text.source.replace('\n', " / "));
-        if let Some(translation) = &text.translation {
-            println!("     -> {}", translation.replace('\n', " / "));
+    for page in &pages {
+        let translated = page
+            .texts
+            .iter()
+            .filter(|text| text.translation.is_some())
+            .count();
+        let empty = page
+            .texts
+            .iter()
+            .filter(|text| text.source.trim().is_empty())
+            .count();
+        println!(
+            "--- page {} [{}]: {} block(s), {translated} translated, {empty} empty",
+            page.index,
+            page.label,
+            page.texts.len()
+        );
+        for text in &page.texts {
+            println!("    {}", text.source.replace('\n', " / "));
+            if let Some(translation) = &text.translation {
+                println!("      -> {}", translation.replace('\n', " / "));
+            }
         }
     }
     Ok(())
