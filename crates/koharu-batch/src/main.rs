@@ -68,6 +68,30 @@ enum Command {
         /// Report changes without writing them.
         #[arg(long)]
         dry_run: bool,
+
+        /// Where to record what was replaced, for `khr revert`.
+        #[arg(long, value_name = "FILE")]
+        log: Option<PathBuf>,
+    },
+
+    /// Inspect, load and unload models on the local LM Studio server.
+    Models {
+        #[command(subcommand)]
+        action: ModelsAction,
+    },
+
+    /// Restore translations replaced by a previous `khr post` run.
+    Revert {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+
+        /// Log written by the run to undo.
+        #[arg(long, value_name = "FILE")]
+        log: PathBuf,
+
+        /// Report what would be restored without writing.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Run pipeline stages over a project, writing results back into it.
@@ -86,6 +110,31 @@ enum Command {
         /// Force CPU execution.
         #[arg(long)]
         cpu: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ModelsAction {
+    /// List installed models, or only those currently resident.
+    List {
+        /// Show what is loaded and how much memory it holds.
+        #[arg(long)]
+        loaded: bool,
+    },
+
+    /// Load a model, making it available for `khr post`.
+    Load {
+        model: String,
+
+        /// Context window to allocate.
+        #[arg(long, value_name = "TOKENS")]
+        context: Option<u32>,
+    },
+
+    /// Release a model, freeing its memory.
+    Unload {
+        /// Model to release; every loaded model when omitted.
+        model: Option<String>,
     },
 }
 
@@ -227,6 +276,7 @@ async fn main() -> Result<()> {
             instructions,
             batch,
             dry_run,
+            log,
         } => {
             post(
                 &project,
@@ -236,9 +286,16 @@ async fn main() -> Result<()> {
                 instructions,
                 batch,
                 dry_run,
+                log,
             )
             .await
         }
+        Command::Models { action } => models(action).await,
+        Command::Revert {
+            project,
+            log,
+            dry_run,
+        } => revert(&project, &log, dry_run).await,
     }
 }
 
@@ -513,6 +570,7 @@ async fn post(
     instructions: PathBuf,
     batch: usize,
     dry_run: bool,
+    log: Option<PathBuf>,
 ) -> Result<()> {
     anyhow::ensure!(batch > 0, "batch size must be at least 1");
     let instructions = std::fs::read_to_string(&instructions)
@@ -687,5 +745,201 @@ async fn post(
         accepted.len(),
         project.display()
     );
+
+    // The scene keeps an undo history only for the lifetime of an open session,
+    // so once this process exits nothing in the project can roll these edits
+    // back. A corrector is a generative model rewriting text that was already
+    // valid, and a subtly wrong rewrite passes every guard above, so the
+    // replaced text is recorded on disk for `khr revert`.
+    if let Some(path) = log {
+        let record = RevertLog {
+            project: project.display().to_string(),
+            model: model.to_owned(),
+            changes: accepted
+                .iter()
+                .map(|(id, previous, candidate)| RevertEntry {
+                    entity: *id,
+                    before: previous.text.value.clone(),
+                    after: candidate.clone(),
+                })
+                .collect(),
+        };
+        std::fs::write(&path, serde_json::to_string_pretty(&record)?)
+            .with_context(|| format!("failed to write {}", path.display()))?;
+        eprintln!("recorded {} replacement(s) in {}", record.changes.len(), path.display());
+    } else {
+        eprintln!("no --log given: these replacements cannot be reverted automatically");
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RevertEntry {
+    entity: koharu_scene::EntityId,
+    before: String,
+    after: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RevertLog {
+    project: String,
+    model: String,
+    changes: Vec<RevertEntry>,
+}
+
+async fn revert(project: &PathBuf, log: &PathBuf, dry_run: bool) -> Result<()> {
+    let record: RevertLog = serde_json::from_str(
+        &std::fs::read_to_string(log)
+            .with_context(|| format!("failed to read {}", log.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", log.display()))?;
+    eprintln!(
+        "log holds {} replacement(s) made by {}",
+        record.changes.len(),
+        record.model
+    );
+
+    let mut session = Session::open(project)
+        .await
+        .with_context(|| format!("failed to open {}", project.display()))?;
+    let snapshot = session.snapshot();
+
+    // Restore only where the text still matches what the run wrote. Anything
+    // edited by hand since then is left alone: reverting a correction must not
+    // silently discard later work.
+    let mut restorable = Vec::new();
+    let mut diverged = 0_usize;
+    let mut missing = 0_usize;
+    for entry in &record.changes {
+        let Ok(content) = snapshot.text_content(entry.entity) else {
+            missing += 1;
+            continue;
+        };
+        let Some(translation) = content.translation()? else {
+            missing += 1;
+            continue;
+        };
+        if translation.text.value.trim() != entry.after.trim() {
+            diverged += 1;
+            continue;
+        }
+        restorable.push((entry, translation));
+    }
+
+    eprintln!(
+        "{} restorable, {diverged} changed since the run, {missing} no longer present",
+        restorable.len()
+    );
+    if dry_run {
+        eprintln!("dry run: the project was not modified");
+        return Ok(());
+    }
+    if restorable.is_empty() {
+        return Ok(());
+    }
+
+    let patch = session.snapshot().patch(|edit| {
+        for (entry, translation) in &restorable {
+            edit.set(
+                entry.entity,
+                &Translation {
+                    text: Authored {
+                        value: entry.before.clone(),
+                        origin: translation.text.origin.clone(),
+                    },
+                    language: translation.language.clone(),
+                },
+            )?;
+        }
+        Ok(())
+    })?;
+    session.commit(patch).await?;
+    eprintln!("restored {} translation(s)", restorable.len());
+    Ok(())
+}
+
+/// Locates the LM Studio CLI.
+///
+/// The installer puts it in the user profile rather than on PATH, so the well
+/// known location is tried before falling back to PATH for a custom install.
+fn lms_command() -> std::process::Command {
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let bundled = PathBuf::from(home).join(".lmstudio").join("bin").join("lms");
+        let bundled = bundled.with_extension(std::env::consts::EXE_EXTENSION);
+        if bundled.exists() {
+            return std::process::Command::new(bundled);
+        }
+    }
+    std::process::Command::new("lms")
+}
+
+fn run_lms(arguments: &[&str]) -> Result<String> {
+    let output = lms_command()
+        .args(arguments)
+        .output()
+        .context("failed to run the LM Studio CLI; is LM Studio installed?")?;
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "lms {} failed: {}",
+            arguments.join(" "),
+            if stderr.trim().is_empty() {
+                stdout.trim()
+            } else {
+                stderr.trim()
+            }
+        );
+    }
+    Ok(stdout)
+}
+
+/// Strips the spinner frames and cursor escapes the CLI writes while loading, so
+/// a progress animation does not end up in the report.
+fn clean_output(raw: &str) -> String {
+    raw.lines()
+        .map(|line| {
+            line.split(['\r', '\u{1b}'])
+                .next_back()
+                .unwrap_or(line)
+                .trim_end()
+        })
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+async fn models(action: ModelsAction) -> Result<()> {
+    match action {
+        ModelsAction::List { loaded } => {
+            let raw = if loaded {
+                run_lms(&["ps"])?
+            } else {
+                run_lms(&["ls"])?
+            };
+            println!("{}", clean_output(&raw));
+        }
+        ModelsAction::Load { model, context } => {
+            let context = context.unwrap_or(8192).to_string();
+            eprintln!("loading {model}...");
+            let raw = run_lms(&[
+                "load",
+                &model,
+                "--gpu",
+                "max",
+                "--context-length",
+                &context,
+                "-y",
+            ])?;
+            println!("{}", clean_output(&raw));
+        }
+        ModelsAction::Unload { model } => {
+            let raw = match &model {
+                Some(model) => run_lms(&["unload", model])?,
+                None => run_lms(&["unload", "--all"])?,
+            };
+            println!("{}", clean_output(&raw));
+        }
+    }
     Ok(())
 }
