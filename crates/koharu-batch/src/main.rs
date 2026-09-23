@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
@@ -128,32 +128,47 @@ async fn run(project: &PathBuf, stages: &str, limit: Option<usize>, cpu: bool) -
     );
 
     initialize_with_retry().await;
-    let device = koharu_ml::device(cpu);
-    let pipeline = Pipeline::from_config(
-        Config::memory(PipelineConfig::default()),
-        Config::memory(ProvidersConfig::default()),
-        device,
-    )?;
 
-    let snapshot = session.snapshot();
-    let mut committer = SessionCommitter(&mut session);
-    let report = pipeline
-        .execute(
-            snapshot,
-            Request {
-                operation: koharu_pipeline::Operation::Stages { stages },
-                scope: Scope::Pages(pages),
-                progress: Some(Arc::new(|event| {
-                    if let Progress::Finished { stage, elapsed, .. } = event {
-                        eprintln!("{stage} finished in {:.2}s", elapsed.as_secs_f64());
-                    }
-                })),
-                ..Request::default()
-            },
-            &mut committer,
-        )
-        .await?;
-    eprintln!("pipeline finished in {:.2}s", report.elapsed.as_secs_f64());
+    // One stage at a time across every page, rather than every stage per page.
+    // Each stage owns its own pipeline, so dropping it releases that stage's
+    // weights before the next stage loads its own: only one model is resident
+    // at a time. Load cost is paid once per stage either way, and the
+    // accelerator lane already serializes GPU work, so interleaving stages buys
+    // residency pressure without buying throughput.
+    let total = Instant::now();
+    for stage in stages {
+        let started = Instant::now();
+        let pipeline = Pipeline::from_config(
+            Config::memory(PipelineConfig::default()),
+            Config::memory(ProvidersConfig::default()),
+            koharu_ml::device(cpu),
+        )?;
+        let snapshot = session.snapshot();
+        let mut committer = SessionCommitter(&mut session);
+        pipeline
+            .execute(
+                snapshot,
+                Request {
+                    operation: koharu_pipeline::Operation::Only { stage },
+                    scope: Scope::Pages(pages.clone()),
+                    progress: Some(Arc::new(|event| {
+                        if let Progress::Finished { stage, elapsed, .. } = event {
+                            eprintln!("  {stage} {:.2}s", elapsed.as_secs_f64());
+                        }
+                    })),
+                    ..Request::default()
+                },
+                &mut committer,
+            )
+            .await?;
+        drop(pipeline);
+        eprintln!(
+            "{stage}: {} page(s) in {:.2}s (model released)",
+            pages.len(),
+            started.elapsed().as_secs_f64()
+        );
+    }
+    eprintln!("all stages finished in {:.2}s", total.elapsed().as_secs_f64());
     Ok(())
 }
 
