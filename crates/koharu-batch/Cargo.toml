@@ -23,6 +23,7 @@ koharu-config = { workspace = true }
 koharu-ml = { workspace = true }
 koharu-pipeline = { workspace = true }
 koharu-scene = { workspace = true }
+futures = { workspace = true }
 koharu-translator = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
+use futures::StreamExt as _;
 use koharu_pipeline::{
     Committer, Pipeline, PipelineConfig, Progress, Request, Scope, Stage, StageOutput,
 };
@@ -1110,14 +1111,51 @@ async fn download_model(id: &str) -> Result<()> {
         .with_context(|| format!("request to {url} failed"))?
         .error_for_status()
         .context("the download was refused")?;
-    let bytes = response.bytes().await.context("the transfer failed")?;
-    std::fs::write(&partial, &bytes)
-        .with_context(|| format!("failed to write {}", partial.display()))?;
+    let expected = response.content_length();
+
+    // Stream to disk instead of buffering the body: these weights run to tens of
+    // gigabytes and holding one in memory would exhaust a machine that still has
+    // to fit the model it is about to load.
+    let mut file = tokio::fs::File::create(&partial)
+        .await
+        .with_context(|| format!("failed to create {}", partial.display()))?;
+    let mut stream = response.bytes_stream();
+    let mut written = 0_u64;
+    let mut reported = 0_u64;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("the transfer failed")?;
+        written += chunk.len() as u64;
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+            .await
+            .context("failed to write the downloaded data")?;
+        if written - reported >= 512 * 1024 * 1024 {
+            reported = written;
+            match expected {
+                Some(total) => eprintln!(
+                    "  {:.1} of {:.1} GB",
+                    written as f64 / 1_073_741_824.0,
+                    total as f64 / 1_073_741_824.0
+                ),
+                None => eprintln!("  {:.1} GB", written as f64 / 1_073_741_824.0),
+            }
+        }
+    }
+    tokio::io::AsyncWriteExt::flush(&mut file).await?;
+    drop(file);
+
+    // A truncated transfer would otherwise be renamed into place and look ready
+    // to load, failing much later with a corrupt-model error.
+    if let Some(total) = expected
+        && written != total
+    {
+        let _ = std::fs::remove_file(&partial);
+        anyhow::bail!("incomplete download: got {written} of {total} bytes");
+    }
     std::fs::rename(&partial, &target)?;
     eprintln!(
         "installed {} ({:.2} GB) at {}",
         entry.id,
-        bytes.len() as f64 / 1_073_741_824.0,
+        written as f64 / 1_073_741_824.0,
         target.display()
     );
     Ok(())

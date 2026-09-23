@@ -1,20 +1,27 @@
 {
   "_nota": "Catalogo de modelos sugeridos. 'medido' indica si hay resultados del banco de pruebas: sin medicion, las etiquetas por idioma son estimaciones basadas en la arquitectura y no deben presentarse como hechos. Los repositorios estan verificados contra la API de Hugging Face.",
-
   "tareas": {
     "traducir": "Necesita registro explicito sin rechazos y buen manejo del idioma de partida. La libertad de generacion importa mas que la disciplina de formato.",
     "corregir": "Necesita obedecer un esquema JSON estricto y no alterar lo que ya esta bien. La disciplina de formato importa mas que la libertad de generacion."
   },
-
   "modelos": [
     {
       "id": "qwen3.5-9b-uncensored",
       "repo": "HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive",
       "archivo": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf",
       "gb": 6.9,
-      "tareas": ["traducir"],
-      "idiomas": { "ja": "?", "ko": "?", "zh": "?", "en": "?" },
-      "medido": { "corregir": "malo: falla lotes enteros pese al esquema forzado" },
+      "tareas": [
+        "traducir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {
+        "corregir": "malo: falla lotes enteros pese al esquema forzado"
+      },
       "nota": "Base Qwen sin censura. Buen candidato para traducir CJK; descartado como corrector."
     },
     {
@@ -22,9 +29,18 @@
       "repo": "bartowski/TheDrummer_Cydonia-24B-v4.3-GGUF",
       "archivo": "TheDrummer_Cydonia-24B-v4.3-IQ4_XS.gguf",
       "gb": 11.9,
-      "tareas": ["corregir"],
-      "idiomas": { "ja": "?", "ko": "?", "zh": "?", "en": "?" },
-      "medido": { "corregir": "muy bueno: 8/8 en tres corridas; no altero texto correcto sobre material real" },
+      "tareas": [
+        "corregir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {
+        "corregir": "muy bueno: 8/8 en tres corridas; no altero texto correcto sobre material real"
+      },
       "nota": "El unico corrector fiable de los probados. Ocupa mucha VRAM."
     },
     {
@@ -32,8 +48,15 @@
       "repo": "bartowski/EVA-Qwen2.5-14B-v0.2-GGUF",
       "archivo": "EVA-Qwen2.5-14B-v0.2-Q5_K_M.gguf",
       "gb": 10.5,
-      "tareas": ["traducir"],
-      "idiomas": { "ja": "?", "ko": "?", "zh": "?", "en": "?" },
+      "tareas": [
+        "traducir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
       "medido": {},
       "nota": "SIN PROBAR. Afinado narrativo sobre base Qwen: combina registro explicito con el CJK de Qwen."
     },
@@ -42,8 +65,15 @@
       "repo": "anthracite-org/magnum-v4-22b-gguf",
       "archivo": "magnum-v4-22b-Q4_K_M.gguf",
       "gb": 13.3,
-      "tareas": ["traducir"],
-      "idiomas": { "ja": "?", "ko": "?", "zh": "?", "en": "?" },
+      "tareas": [
+        "traducir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
       "medido": {},
       "nota": "SIN PROBAR. Afinado narrativo sobre base Mistral: mejor prosa, previsiblemente peor CJK que las bases Qwen."
     },
@@ -52,8 +82,15 @@
       "repo": "bartowski/magnum-v4-12b-GGUF",
       "archivo": "magnum-v4-12b-Q5_K_M.gguf",
       "gb": 8.7,
-      "tareas": ["traducir"],
-      "idiomas": { "ja": "?", "ko": "?", "zh": "?", "en": "?" },
+      "tareas": [
+        "traducir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
       "medido": {},
       "nota": "SIN PROBAR. Version ligera del anterior, deja mas VRAM libre."
     },
@@ -62,8 +99,15 @@
       "repo": "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF",
       "archivo": "mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
       "gb": 14.3,
-      "tareas": ["corregir"],
-      "idiomas": { "ja": "?", "ko": "?", "zh": "?", "en": "?" },
+      "tareas": [
+        "corregir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
       "medido": {},
       "nota": "SIN PROBAR. Instruct disciplinado con el formato; el corrector no necesita estar descensurado."
     },
@@ -72,8 +116,16 @@
       "repo": "bartowski/Qwen_Qwen3-14B-GGUF",
       "archivo": "Qwen_Qwen3-14B-Q5_K_M.gguf",
       "gb": 10.3,
-      "tareas": ["corregir", "traducir"],
-      "idiomas": { "ja": "?", "ko": "?", "zh": "?", "en": "?" },
+      "tareas": [
+        "corregir",
+        "traducir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
       "medido": {},
       "nota": "SIN PROBAR. Instruct oficial: buena salida estructurada y CJK nativo. Censurado, asi que puede rechazar contenido explicito al traducir."
     },
@@ -82,8 +134,15 @@
       "repo": "MaziyarPanahi/phi-4-GGUF",
       "archivo": "phi-4.Q5_K_M.gguf",
       "gb": 10.6,
-      "tareas": ["corregir"],
-      "idiomas": { "ja": "?", "ko": "?", "zh": "?", "en": "?" },
+      "tareas": [
+        "corregir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
       "medido": {},
       "nota": "SIN PROBAR. El corrector mas ligero del catalogo: deja libres unos 5 GB de VRAM frente a Cydonia. Muy disciplinado con instrucciones, pero su espanol puede ser mas pobre."
     },
@@ -92,10 +151,141 @@
       "repo": "maerong3/Huihui-Mistral-Small-3.2-24B-Instruct-2506-abliterated-Q4_K_M-GGUF",
       "archivo": "huihui-mistral-small-3.2-24b-instruct-2506-abliterated-q4_k_m.gguf",
       "gb": 14.3,
-      "tareas": ["corregir", "traducir"],
-      "idiomas": { "ja": "?", "ko": "?", "zh": "?", "en": "?" },
+      "tareas": [
+        "corregir",
+        "traducir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
       "medido": {},
       "nota": "SIN PROBAR. Mistral Small sin restricciones: sirve para ambas tareas si la disciplina de formato se mantiene."
+    },
+    {
+      "id": "qwen3-8b",
+      "repo": "Qwen/Qwen3-8B-GGUF",
+      "archivo": "Qwen3-8B-Q5_K_M.gguf",
+      "gb": 5.9,
+      "tareas": [
+        "corregir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR. Instruct oficial de Qwen, CJK nativo y ligero. El mejor equilibrio esperado entre leer el original asiatico y escribir buen espanol."
+    },
+    {
+      "id": "exaone-3.5-7.8b",
+      "repo": "lmstudio-community/EXAONE-3.5-7.8B-Instruct-GGUF",
+      "archivo": "EXAONE-3.5-7.8B-Instruct-Q4_K_M.gguf",
+      "gb": 4.8,
+      "tareas": [
+        "corregir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR, para proyectos coreanos. Modelo coreano nativo de LG: deberia leer el hangul original, pero su espanol puede ser mas pobre que el de un multilingue."
+    },
+    {
+      "id": "kanana-1.5-8b",
+      "repo": "Mungert/kanana-1.5-8b-instruct-2505-GGUF",
+      "archivo": "kanana-1.5-8b-instruct-2505-q5_k_m.gguf",
+      "gb": 5.8,
+      "tareas": [
+        "corregir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR, para proyectos coreanos. Modelo coreano nativo de Kakao, misma contrapartida que EXAONE en el espanol de salida."
+    },
+    {
+      "id": "swallow-13b-instruct",
+      "repo": "mmnga/tokyotech-llm-Swallow-13b-instruct-v0.1-gguf",
+      "archivo": "Swallow-13b-instruct-v0.1-q5_K_M.gguf",
+      "gb": 9.2,
+      "tareas": [
+        "corregir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR, para proyectos japoneses. Base Llama ampliada con japones por Tokyo Tech."
+    },
+    {
+      "id": "llama-3-korean-bllossom-8b",
+      "repo": "MLP-KTLim/llama-3-Korean-Bllossom-8B-gguf-Q4_K_M",
+      "archivo": "llama-3-Korean-Bllossom-8B-Q4_K_M.gguf",
+      "gb": 4.9,
+      "tareas": [
+        "traducir",
+        "corregir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR, para proyectos coreanos. Base Llama-3 ampliada con coreano. Candidato a hacer las dos pasadas con un solo modelo."
+    },
+    {
+      "id": "eeve-korean-instruct-10.8b",
+      "repo": "yoonjae22/EEVE-Korean-Instruct-10.8B-v1.0-GGUF",
+      "archivo": "ggml-model-q4_1.gguf",
+      "gb": 6.8,
+      "tareas": [
+        "traducir",
+        "corregir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR, para proyectos coreanos. Instruct coreano de Yanolja sobre base Solar. Candidato a hacer las dos pasadas con un solo modelo."
+    },
+    {
+      "id": "sakura-13b-korean",
+      "repo": "SakuraLLM/Sakura-13B-Korean-v0.9-GGUF",
+      "archivo": "sakura-13b-korean-v0.9-Q6_K.gguf",
+      "gb": 10.7,
+      "tareas": [
+        "traducir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR. Serie Sakura, orientada a traducir novelas ligeras. Muy poco descargado, asi que hay menos experiencia ajena en la que apoyarse."
     }
-  ]
+  ],
+  "_nota_idiomas": "Un corrector necesita DOS capacidades: leer el idioma de partida para detectar lo que la traduccion perdio, y escribir buen espanol. Un modelo nativo del idioma de partida suele ganar en lo primero y perder en lo segundo; medir ambas cosas es el proposito de khr bench.",
+  "_nota_dos_pasadas": "Cuando ningun corrector especializado entiende el idioma de partida, conviene que el mismo modelo haga las dos pasadas: si comprende el original lo bastante para traducirlo, tambien lo comprende para revisar su propia salida, y se evita cargar un segundo modelo."
 }
