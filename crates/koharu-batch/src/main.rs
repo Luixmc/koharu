@@ -375,14 +375,23 @@ async fn dump(project: &PathBuf, limit: Option<usize>, json: bool) -> Result<()>
 /// the wire format. Both travel in the system message so the model never sees
 /// the framing mixed into the text it must edit, which is what let an earlier
 /// in-band marker leak into the replies.
-const FORMAT_APPENDIX: &str = "\n\nFORMATO DE INTERCAMBIO\n\
-Recibes un objeto JSON con la clave \"bloques\". Cada bloque trae \"id\", \
-\"original\" (el texto de partida) y \"traduccion\" (la version a corregir).\n\
-Responde UNICAMENTE con un objeto JSON con la clave \"bloques\", donde cada \
-elemento trae \"id\" y \"correccion\".\n\
-Devuelve exactamente un elemento por cada bloque recibido y conserva su \"id\".\n\
-Si un bloque ya esta correcto, repite su texto en \"correccion\".\n\
-No escribas nada fuera del objeto JSON.";
+const FORMAT_APPENDIX: &str = "\n\nFORMATO DE INTERCAMBIO\n\n\
+ENTRADA: un objeto JSON con la clave \"bloques\". Cada bloque trae:\n\
+- \"id\": identificador\n\
+- \"es\": el texto en espanol que debes corregir\n\
+- \"ref\": el texto de partida, SOLO COMO CONSULTA INTERNA\n\n\
+SALIDA: para cada bloque, \"id\" y \"es_corregido\".\n\n\
+QUE ES \"es_corregido\":\n\
+Es el globo de dialogo listo para imprimir en la pagina. Contiene\n\
+EXCLUSIVAMENTE el texto en espanol que leera el lector.\n\n\
+PROHIBIDO en \"es_corregido\":\n\
+- Copiar o anexar el contenido de \"ref\"\n\
+- Escribir \"ref:\", \"es:\", comillas de encuadre o cualquier etiqueta\n\
+- Anadir comentarios, notas o explicaciones\n\n\
+Conserva la puntuacion final del texto: si \"es\" termina en punto, signo de\n\
+exclamacion, interrogacion o puntos suspensivos, \"es_corregido\" tambien.\n\
+Si \"es\" ya esta bien, repitelo identico.\n\
+Devuelve exactamente un elemento por cada bloque recibido, con su \"id\".";
 
 #[derive(serde::Serialize)]
 struct ChatMessage<'a> {
@@ -396,6 +405,42 @@ struct ChatRequest<'a> {
     messages: Vec<ChatMessage<'a>>,
     temperature: f32,
     stream: bool,
+    response_format: serde_json::Value,
+}
+
+/// Constrains the reply to the expected shape.
+///
+/// Asking for the shape in the prompt alone was not enough: the model misspelled
+/// the key on one block and emitted invalid JSON on another within a single
+/// reply. A served schema removes both failures, leaving only the editorial
+/// quality of the text to judge.
+fn correction_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "json_schema",
+        "json_schema": {
+            "name": "correcciones",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "bloques": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "integer"},
+                                "es_corregido": {"type": "string"}
+                            },
+                            "required": ["id", "es_corregido"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["bloques"],
+                "additionalProperties": false
+            }
+        }
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -421,7 +466,7 @@ struct CorrectionBatch {
 #[derive(serde::Deserialize)]
 struct CorrectionItem {
     id: usize,
-    correccion: String,
+    es_corregido: String,
 }
 
 /// Rejects a reply that cannot be an edit of the given translation.
@@ -430,12 +475,20 @@ struct CorrectionItem {
 /// an empty string, or echoes a bracketed label has failed to follow the format
 /// rather than improved the text. Writing such a reply would replace a usable
 /// translation with noise, so it is dropped and reported.
-fn plausible_correction(previous: &str, candidate: &str) -> bool {
+fn plausible_correction(previous: &str, reference: &str, candidate: &str) -> bool {
     let candidate = candidate.trim();
     if candidate.is_empty() {
         return false;
     }
     if candidate.starts_with('[') && candidate.ends_with(']') {
+        return false;
+    }
+    // The reference travels with each block for the corrector to consult, and a
+    // reply that carries it back has echoed the request instead of editing the
+    // translation. A short reference can legitimately coincide with the
+    // corrected wording, so only a substantial one counts as contamination.
+    let reference = reference.trim();
+    if reference.chars().count() >= 8 && candidate.contains(reference) {
         return false;
     }
     let previous_length = previous.trim().chars().count();
@@ -523,8 +576,8 @@ async fn post(
                 .enumerate()
                 .map(|(id, (_, source, translation))| serde_json::json!({
                     "id": id,
-                    "original": source,
-                    "traduccion": translation.text.value,
+                    "es": translation.text.value,
+                    "ref": source,
                 }))
                 .collect::<Vec<_>>(),
         });
@@ -543,6 +596,7 @@ async fn post(
             ],
             temperature: 0.2,
             stream: false,
+            response_format: correction_schema(),
         };
 
         let response: ChatResponse = client
@@ -578,18 +632,18 @@ async fn post(
 
         let mut applied = 0_usize;
         for item in parsed.bloques {
-            let Some((id, _, translation)) = chunk.get(item.id) else {
+            let Some((id, source, translation)) = chunk.get(item.id) else {
                 continue;
             };
             let previous = &translation.text.value;
-            if !plausible_correction(previous, &item.correccion) {
+            if !plausible_correction(previous, source, &item.es_corregido) {
                 rejected += 1;
                 continue;
             }
-            if previous.trim() == item.correccion.trim() {
+            if previous.trim() == item.es_corregido.trim() {
                 continue;
             }
-            accepted.push((*id, translation.clone(), item.correccion));
+            accepted.push((*id, translation.clone(), item.es_corregido));
             applied += 1;
         }
         eprintln!("  batch {index}: {applied} correction(s) of {}", chunk.len());
