@@ -26,6 +26,29 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Score a model against the bundled per-language test cases.
+    Bench {
+        /// Base URL of the OpenAI-compatible server hosting the model.
+        #[arg(long, default_value = "http://localhost:1234")]
+        base_url: String,
+
+        /// Model identifier, as the server reports it.
+        #[arg(long)]
+        model: String,
+
+        /// File holding the correction instructions.
+        #[arg(long, value_name = "FILE")]
+        instructions: PathBuf,
+
+        /// Comma-separated source languages: en, ja, ko, zh.
+        #[arg(long)]
+        languages: Option<String>,
+
+        /// Repeat to measure how stable the model is.
+        #[arg(long, default_value_t = 1)]
+        runs: usize,
+    },
+
     /// Print the recognized text of a project without modifying it.
     Dump {
         #[arg(short, long, value_name = "KHRPROJ")]
@@ -322,6 +345,13 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Command::Bench {
+            base_url,
+            model,
+            instructions,
+            languages,
+            runs,
+        } => bench(&base_url, &model, instructions, languages, runs).await,
         Command::Models { action } => models(action).await,
         Command::Revert {
             project,
@@ -1178,5 +1208,197 @@ fn import_model(file: &PathBuf, publisher: &str, name: Option<String>) -> Result
         }
     }
     eprintln!("restart LM Studio if it does not list it yet");
+    Ok(())
+}
+
+/// Test cases, shipped with the binary so a run needs no external files and the
+/// cases stay versioned alongside the checks that read them.
+const BENCH_CASES: &str = include_str!("../assets/bench-cases.json");
+
+#[derive(serde::Deserialize)]
+struct BenchCase {
+    es: String,
+    #[serde(rename = "ref")]
+    reference: String,
+    check: String,
+    #[serde(default)]
+    value: Vec<String>,
+    trampa: String,
+}
+
+fn bench_cases(languages: Option<&str>) -> Result<BTreeMap<String, Vec<BenchCase>>> {
+    let raw: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(BENCH_CASES).context("the bundled test cases are malformed")?;
+    let wanted: Option<Vec<&str>> =
+        languages.map(|value| value.split(',').map(str::trim).collect());
+
+    let mut cases = BTreeMap::new();
+    for (language, value) in raw {
+        // Keys beginning with an underscore carry documentation, not cases.
+        if language.starts_with('_') {
+            continue;
+        }
+        if let Some(wanted) = &wanted
+            && !wanted.contains(&language.as_str())
+        {
+            continue;
+        }
+        cases.insert(
+            language,
+            serde_json::from_value(value).context("a language holds malformed cases")?,
+        );
+    }
+    anyhow::ensure!(!cases.is_empty(), "no cases matched the requested languages");
+    Ok(cases)
+}
+
+/// Decides whether a reply satisfies a case.
+///
+/// The checks are deliberately loose about wording: a correction may legitimately
+/// phrase things differently, so a case asserts the presence or absence of a
+/// distinguishing fragment rather than an exact sentence. `igual` is the
+/// exception, and ignores only trailing punctuation.
+fn case_passes(case: &BenchCase, reply: &str) -> bool {
+    let reply = reply.trim();
+    let lowered = reply.to_lowercase();
+    match case.check.as_str() {
+        "contiene" => case
+            .value
+            .iter()
+            .any(|needle| lowered.contains(&needle.to_lowercase())),
+        "no_contiene" => !case
+            .value
+            .iter()
+            .any(|needle| lowered.contains(&needle.to_lowercase())),
+        "igual" => {
+            let normalize = |text: &str| {
+                text.trim()
+                    .trim_end_matches(['.', '!', '?', '\u{a1}', '\u{bf}'])
+                    .to_lowercase()
+            };
+            normalize(reply) == normalize(&case.es)
+        }
+        _ => false,
+    }
+}
+
+async fn bench(
+    base_url: &str,
+    model: &str,
+    instructions: PathBuf,
+    languages: Option<String>,
+    runs: usize,
+) -> Result<()> {
+    anyhow::ensure!(runs > 0, "at least one run is required");
+    let cases = bench_cases(languages.as_deref())?;
+    let instructions = std::fs::read_to_string(&instructions)
+        .with_context(|| format!("failed to read {}", instructions.display()))?;
+    let system = format!("{}{FORMAT_APPENDIX}", instructions.trim());
+
+    let client = reqwest::Client::new();
+    let endpoint = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
+    let mut totals: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+
+    for run in 1..=runs {
+        eprintln!("--- run {run} of {runs} ---");
+        for (language, items) in &cases {
+            let payload = serde_json::json!({
+                "bloques": items
+                    .iter()
+                    .enumerate()
+                    .map(|(id, case)| serde_json::json!({
+                        "id": id,
+                        "es": case.es,
+                        "ref": case.reference,
+                    }))
+                    .collect::<Vec<_>>(),
+            });
+            let user = serde_json::to_string(&payload)?;
+            let request = ChatRequest {
+                model,
+                messages: vec![
+                    ChatMessage {
+                        role: "system",
+                        content: &system,
+                    },
+                    ChatMessage {
+                        role: "user",
+                        content: &user,
+                    },
+                ],
+                temperature: 0.2,
+                stream: false,
+                response_format: correction_schema(),
+            };
+            let response: ChatResponse = client
+                .post(&endpoint)
+                .json(&request)
+                .send()
+                .await
+                .with_context(|| format!("request to {endpoint} failed"))?
+                .error_for_status()
+                .context("the model returned an error")?
+                .json()
+                .await
+                .context("malformed response")?;
+            let reply = response
+                .choices
+                .first()
+                .map(|choice| choice.message.content.as_str())
+                .unwrap_or_default();
+
+            // An unparsable reply scores zero rather than aborting: failing to
+            // hold the format is itself a result worth recording, and it is how
+            // a model gets ruled out as a corrector.
+            let parsed = extract_json(reply)
+                .and_then(|json| serde_json::from_str::<CorrectionBatch>(json).ok());
+            let Some(parsed) = parsed else {
+                eprintln!("  {language}: unparsable reply, scored 0/{}", items.len());
+                totals.entry(language.clone()).or_default().push(0);
+                continue;
+            };
+            let by_id: BTreeMap<usize, String> = parsed
+                .bloques
+                .into_iter()
+                .map(|item| (item.id, item.es_corregido))
+                .collect();
+
+            let mut passed = 0;
+            for (id, case) in items.iter().enumerate() {
+                let reply = by_id.get(&id).map(String::as_str).unwrap_or_default();
+                if case_passes(case, reply) {
+                    passed += 1;
+                } else if run == 1 {
+                    eprintln!("  {language} FALLA: {}", case.trampa);
+                    eprintln!("      entrada: {:?}", case.es);
+                    eprintln!("      salida : {reply:?}");
+                }
+            }
+            eprintln!("  {language}: {passed}/{}", items.len());
+            totals.entry(language.clone()).or_default().push(passed);
+        }
+    }
+
+    println!();
+    println!("=== {model} ===");
+    let mut total = 0;
+    let mut possible = 0;
+    for (language, scores) in &totals {
+        let items = cases[language].len();
+        let best = scores.iter().max().copied().unwrap_or(0);
+        let worst = scores.iter().min().copied().unwrap_or(0);
+        let sum: usize = scores.iter().sum();
+        total += sum;
+        possible += items * scores.len();
+        let estable = if best == worst { "estable" } else { "variable" };
+        println!(
+            "{language}: {:.1}/{items} de media  (peor {worst}, mejor {best}, {estable})",
+            sum as f64 / scores.len() as f64
+        );
+    }
+    println!(
+        "global: {:.0}% ({total}/{possible})",
+        total as f64 / possible as f64 * 100.0
+    );
     Ok(())
 }
