@@ -1,155 +1,97 @@
 {
-  "_nota": "Casos de prueba para evaluar modelos traductores y correctores. Cada caso lleva el texto de partida (ref), una version en espanol con el fallo tipico (es), y una comprobacion sobre la salida esperada. 'contiene' exige alguna de las variantes; 'no_contiene' las prohibe; 'igual' exige que el texto no se altere.",
+  "_nota": "Casos para evaluar traductores y correctores de manga adulto. Cada caso trae el texto de partida (ref), una version en espanol con el fallo tipico (es) y una comprobacion: 'contiene' exige alguna variante, 'no_contiene' las prohibe, 'igual' exige no alterar el texto. Las frases son ejemplos redactados para la prueba, no citas de ninguna obra.",
+
+  "_nota_controles": "Cada idioma incluye casos marcados como control: frases NO sexuales que usan el mismo vocabulario ambiguo. Sirven para medir la sobre-interpretacion, porque un corrector predispuesto a leerlo todo en clave sexual convierte una despedida en un orgasmo y ese error es peor que el original: aparece en paginas que nadie sospecharia revisar.",
 
   "en": [
-    {
-      "es": "Me estoy por ir!",
-      "ref": "I'M COMING!",
-      "check": "contiene",
-      "value": ["veng", "venir", "acab", "corr"],
-      "trampa": "coming sexual, no desplazamiento"
-    },
-    {
-      "es": "Algo dure me aprieta.",
-      "ref": "SOMETHING HARD IS PRESSING AGAINST ME.",
-      "check": "contiene",
-      "value": ["duro"],
-      "trampa": "hard es adjetivo, no forma verbal"
-    },
-    {
-      "es": "Me estoy voy.",
-      "ref": "I'M LEAVING NOW.",
-      "check": "contiene",
-      "value": ["me voy", "yendo"],
-      "trampa": "perifrasis rota: nunca 'me estoy voy'"
-    },
-    {
-      "es": "Vosotros sois tontos.",
-      "ref": "YOU GUYS ARE DUMB.",
-      "check": "no_contiene",
-      "value": ["vosotros", "sois"],
-      "trampa": "peninsular a latino neutro"
-    },
-    {
-      "es": "Me pesa contra la espalda.",
-      "ref": "IT'S PRESSING AGAINST MY BACK.",
-      "check": "no_contiene",
-      "value": ["pesa", "pesar"],
-      "trampa": "pressing es presionar, no pesar"
-    }
+    { "es": "Me estoy por ir!", "ref": "I'M COMING!", "check": "contiene",
+      "value": ["veng", "venir", "acab", "corr"], "trampa": "coming sexual, no desplazamiento" },
+    { "es": "Algo dure me aprieta.", "ref": "SOMETHING HARD IS PRESSING AGAINST ME.", "check": "contiene",
+      "value": ["duro"], "trampa": "hard es adjetivo, no forma verbal" },
+    { "es": "Voy a terminar adentro.", "ref": "I'M GONNA CUM INSIDE.", "check": "contiene",
+      "value": ["venir", "acab", "corr", "leche", "semen"], "trampa": "cum: registro explicito, no 'terminar'" },
+    { "es": "No puedo sostenerlo.", "ref": "I CAN'T HOLD IT ANYMORE.", "check": "contiene",
+      "value": ["aguant", "resist", "soport"], "trampa": "hold it aqui es aguantar, no sostener un objeto" },
+    { "es": "Estas muy humeda.", "ref": "YOU'RE SO WET.", "check": "contiene",
+      "value": ["mojad", "humed"], "trampa": "registro: mojada antes que humeda" },
+    { "es": "Mas profundo.", "ref": "DEEPER.", "check": "contiene",
+      "value": ["adentro", "profund", "hondo"], "trampa": "orden de una sola palabra, sin perder la fuerza" },
+    { "es": "Se siente comodo.", "ref": "IT FEELS SO GOOD.", "check": "no_contiene",
+      "value": ["comodo", "cómodo"], "trampa": "feels good es placer, no comodidad" },
+    { "es": "Esta muy ajustado.", "ref": "IT'S SO TIGHT.", "check": "contiene",
+      "value": ["apretad", "estrech", "ajustad"], "trampa": "tight referido al cuerpo" },
+    { "es": "Ya me voy de la casa.", "ref": "I'M LEAVING THE HOUSE NOW.", "check": "no_contiene",
+      "value": ["veng", "acab", "corr"], "trampa": "CONTROL: despedida real, no debe volverse sexual" },
+    { "es": "La mesa es dura.", "ref": "THE TABLE IS HARD.", "check": "no_contiene",
+      "value": ["erect", "verga", "pene"], "trampa": "CONTROL: hard sobre un objeto, sin lectura sexual" }
   ],
 
   "ja": [
-    {
-      "es": "Ya voy!",
-      "ref": "いくっ！いくっ！",
-      "check": "contiene",
-      "value": ["veng", "venir", "acab", "corr"],
-      "trampa": "iku sexual, no desplazamiento"
-    },
-    {
-      "es": "Hermano mayor, para.",
-      "ref": "お兄ちゃん、やめて。",
-      "check": "contiene",
-      "value": ["onii", "nii", "hermano"],
-      "trampa": "honorifico: conservarlo o traducirlo, pero no omitirlo"
-    },
-    {
-      "es": "Es inutil.",
-      "ref": "だめってば。",
-      "check": "no_contiene",
-      "value": ["inutil", "inútil"],
-      "trampa": "dame aqui es 'no' o 'basta', no 'inutil'"
-    },
-    {
-      "es": "Se siente comodo.",
-      "ref": "気持ちいい…",
-      "check": "no_contiene",
-      "value": ["comodo", "cómodo"],
-      "trampa": "kimochi ii es placer, no comodidad"
-    },
-    {
-      "es": "Doki doki",
-      "ref": "ドキドキ",
-      "check": "no_contiene",
-      "value": ["doki"],
-      "trampa": "onomatopeya: llevarla a un equivalente en espanol"
-    }
+    { "es": "Ya voy!", "ref": "いくっ！いくっ！", "check": "contiene",
+      "value": ["veng", "venir", "acab", "corr"], "trampa": "iku sexual, no desplazamiento" },
+    { "es": "Se siente comodo.", "ref": "気持ちいい…", "check": "no_contiene",
+      "value": ["comodo", "cómodo"], "trampa": "kimochi ii es placer, no comodidad" },
+    { "es": "Es inutil.", "ref": "だめってば。", "check": "no_contiene",
+      "value": ["inutil", "inútil"], "trampa": "dame aqui es 'no' o 'basta'" },
+    { "es": "Hermano mayor, para.", "ref": "お兄ちゃん、やめて…", "check": "contiene",
+      "value": ["onii", "nii", "hermano"], "trampa": "honorifico: conservarlo o traducirlo, no omitirlo" },
+    { "es": "Doki doki", "ref": "ドキドキ", "check": "no_contiene",
+      "value": ["doki"], "trampa": "onomatopeya: llevarla a un equivalente en espanol" },
+    { "es": "Adentro no.", "ref": "中はだめっ…", "check": "contiene",
+      "value": ["adentro", "dentro"], "trampa": "naka: dentro del cuerpo, con la negativa" },
+    { "es": "Mas.", "ref": "もっと…もっと…", "check": "contiene",
+      "value": ["mas", "más"], "trampa": "repeticion que marca intensidad creciente" },
+    { "es": "Estoy avergonzada.", "ref": "恥ずかしい…", "check": "contiene",
+      "value": ["vergon", "vergüen", "pena"], "trampa": "hazukashii: pudor, tono sumiso" },
+    { "es": "Me voy a casa.", "ref": "家に帰るよ。", "check": "no_contiene",
+      "value": ["veng", "acab", "corr"], "trampa": "CONTROL: volver a casa, sin lectura sexual" },
+    { "es": "Vamos al colegio.", "ref": "学校に行こう。", "check": "no_contiene",
+      "value": ["veng", "acab", "corr"], "trampa": "CONTROL: iku literal de desplazamiento" }
   ],
 
   "ko": [
-    {
-      "es": "Parecia que todo seria facil...",
-      "ref": "앞으로도순조로울것 같았는데…",
-      "check": "no_contiene",
-      "value": ["facil", "fácil"],
-      "trampa": "sunjoroptda es 'ir bien', no 'facil'; ademas el OCR vino sin espacios"
-    },
-    {
-      "es": "Parecia que iba a ir bien.",
-      "ref": "앞으로도 순조로울 것 같았는데…",
-      "check": "contiene",
-      "value": ["adelante", "ahora en", "futuro", "también", "tambien"],
-      "trampa": "la particula do (tambien) y apeuro (de ahora en adelante) no se pueden omitir"
-    },
-    {
-      "es": "Voy a salir.",
-      "ref": "나 싸요…",
-      "check": "contiene",
-      "value": ["veng", "venir", "acab", "corr"],
-      "trampa": "ssada coloquial es eyacular, no salir"
-    },
-    {
-      "es": "Encontramos la cama.",
-      "ref": "방침대",
-      "check": "no_contiene",
-      "value": ["encontramos", "descubrimos"],
-      "trampa": "no inventar verbos que el original no trae"
-    },
-    {
-      "es": "Oye, hermano.",
-      "ref": "오빠…",
-      "check": "contiene",
-      "value": ["oppa", "hermano"],
-      "trampa": "oppa: conservarlo o traducirlo, pero con criterio constante"
-    }
+    { "es": "Voy a salir.", "ref": "나 싸요…", "check": "contiene",
+      "value": ["veng", "venir", "acab", "corr"], "trampa": "ssada coloquial es eyacular" },
+    { "es": "Parecia que todo seria facil...", "ref": "앞으로도 순조로울 것 같았는데…", "check": "no_contiene",
+      "value": ["facil", "fácil"], "trampa": "sunjoroptda es 'ir bien', no 'facil'" },
+    { "es": "Parecia que iba a ir bien.", "ref": "앞으로도 순조로울 것 같았는데…", "check": "contiene",
+      "value": ["adelante", "ahora en", "futuro", "también", "tambien"], "trampa": "la particula do (tambien) no se puede omitir" },
+    { "es": "Oye, hermano.", "ref": "오빠…", "check": "contiene",
+      "value": ["oppa", "hermano"], "trampa": "oppa: conservarlo o traducirlo con criterio constante" },
+    { "es": "Se siente comodo.", "ref": "좀 좋아…", "check": "no_contiene",
+      "value": ["comodo", "cómodo"], "trampa": "joah aqui es placer, no comodidad" },
+    { "es": "Adentro no.", "ref": "안에는 안 돼…", "check": "contiene",
+      "value": ["adentro", "dentro"], "trampa": "an: dentro del cuerpo, con la negativa" },
+    { "es": "Es vergonzoso.", "ref": "부끄러워…", "check": "contiene",
+      "value": ["vergon", "vergüen", "pena"], "trampa": "buekkeureowo: pudor" },
+    { "es": "Encontramos la cama.", "ref": "침대", "check": "no_contiene",
+      "value": ["encontramos", "descubrimos"], "trampa": "no inventar verbos que el original no trae" },
+    { "es": "Voy a salir de casa.", "ref": "집에서 나가요…", "check": "no_contiene",
+      "value": ["veng", "acab", "corr"], "trampa": "CONTROL: salir de casa, sin lectura sexual" },
+    { "es": "El examen fue facil.", "ref": "시험이 쉬웠어요…", "check": "contiene",
+      "value": ["facil", "fácil", "sencill"], "trampa": "CONTROL: aqui 'facil' SI es correcto" }
   ],
 
   "zh": [
-    {
-      "es": "Ya me voy.",
-      "ref": "我要去了！",
-      "check": "contiene",
-      "value": ["veng", "venir", "acab", "corr"],
-      "trampa": "en escena sexual no es marcharse"
-    },
-    {
-      "es": "Hermano.",
-      "ref": "哥哥…",
-      "check": "contiene",
-      "value": ["hermano"],
-      "trampa": "gege es hermano mayor: no perder la jerarquia"
-    },
-    {
-      "es": "Estoy comodo.",
-      "ref": "好舒服…",
-      "check": "no_contiene",
-      "value": ["comodo", "cómodo"],
-      "trampa": "shufu aqui es placer fisico"
-    },
-    {
-      "es": "Una pieza de persona.",
-      "ref": "一个人",
-      "check": "no_contiene",
-      "value": ["pieza"],
-      "trampa": "los clasificadores no se traducen literalmente"
-    },
-    {
-      "es": "Vamos.",
-      "ref": "走吧。",
-      "check": "contiene",
-      "value": ["vamos", "vámonos", "andando"],
-      "trampa": "la particula ba marca sugerencia, no orden"
-    }
+    { "es": "Ya me voy.", "ref": "我要去了！", "check": "contiene",
+      "value": ["veng", "venir", "acab", "corr"], "trampa": "en escena sexual no es marcharse" },
+    { "es": "Estoy comodo.", "ref": "好舒服…", "check": "no_contiene",
+      "value": ["comodo", "cómodo"], "trampa": "shufu aqui es placer fisico" },
+    { "es": "Hermano.", "ref": "哥哥…", "check": "contiene",
+      "value": ["hermano"], "trampa": "gege es hermano mayor: no perder la jerarquia" },
+    { "es": "Una pieza de persona.", "ref": "一个人", "check": "no_contiene",
+      "value": ["pieza"], "trampa": "los clasificadores no se traducen literalmente" },
+    { "es": "Adentro no.", "ref": "不要在里面…", "check": "contiene",
+      "value": ["adentro", "dentro"], "trampa": "limian: dentro del cuerpo, con la negativa" },
+    { "es": "No pares.", "ref": "不要停…", "check": "contiene",
+      "value": ["pares", "pare", "sigas parando", "contin"], "trampa": "orden en negativo, mantener la urgencia" },
+    { "es": "Me da verguenza.", "ref": "好羞耸…", "check": "contiene",
+      "value": ["vergon", "vergüen", "pena"], "trampa": "xiuse: pudor" },
+    { "es": "Mas fuerte.", "ref": "再用力一点…", "check": "contiene",
+      "value": ["fuerte", "duro", "recio"], "trampa": "yongli: intensidad fisica" },
+    { "es": "Me voy a la escuela.", "ref": "我要去学校了。", "check": "no_contiene",
+      "value": ["veng", "acab", "corr"], "trampa": "CONTROL: qu literal de desplazamiento" },
+    { "es": "La cama es comoda.", "ref": "床很舒服。", "check": "contiene",
+      "value": ["comod", "cómod"], "trampa": "CONTROL: aqui shufu SI es comodidad" }
   ]
 }
