@@ -284,6 +284,60 @@
       },
       "medido": {},
       "nota": "SIN PROBAR. Serie Sakura, orientada a traducir novelas ligeras. Muy poco descargado, asi que hay menos experiencia ajena en la que apoyarse."
+    },
+    {
+      "id": "qwen3.8-27b",
+      "repo": "unsloth/Qwen3.8-27B-GGUF",
+      "archivo": "Qwen3.8-27B-UD-IQ4_XS.gguf",
+      "gb": 13.3,
+      "tareas": [
+        "corregir",
+        "traducir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR. El mayor que entra en 16 GB dejando margen de contexto. CJK nativo."
+    },
+    {
+      "id": "supergemma4-26b-uncensored",
+      "repo": "Jiunsong/supergemma4-26b-uncensored-gguf-v2",
+      "archivo": "supergemma4-26b-uncensored-fast-v2-Q4_K_M.gguf",
+      "gb": 15.6,
+      "tareas": [
+        "corregir",
+        "traducir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR. Ocupa casi toda una tarjeta de 16 GB: deja apenas margen para el contexto y obliga a descargar capas a CPU."
+    },
+    {
+      "id": "qwen3.6-35b-a3b",
+      "repo": "unsloth/Qwen3.6-35B-A3B-GGUF",
+      "archivo": "Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
+      "gb": 16.5,
+      "tareas": [
+        "corregir",
+        "traducir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR. NO ENTRA en 16 GB de video. Mezcla de expertos con 3B activos, asi que repartido con la CPU seria mas llevadero que un denso del mismo tamano, pero aun asi lento."
     }
   ],
   "_nota_idiomas": "Un corrector necesita DOS capacidades: leer el idioma de partida para detectar lo que la traduccion perdio, y escribir buen espanol. Un modelo nativo del idioma de partida suele ganar en lo primero y perder en lo segundo; medir ambas cosas es el proposito de khr bench.",
