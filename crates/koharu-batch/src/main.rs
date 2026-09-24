@@ -81,9 +81,13 @@ enum Command {
         #[arg(short, long, value_name = "KHRPROJ")]
         project: PathBuf,
 
-        /// Limit to the first N pages.
+        /// Limit to N pages.
         #[arg(long, value_name = "N")]
         pages: Option<usize>,
+
+        /// Skip this many pages before starting.
+        #[arg(long, default_value_t = 0, value_name = "N")]
+        skip: usize,
 
         /// Base URL of the OpenAI-compatible server hosting the corrector.
         #[arg(long, default_value = "http://localhost:1234")]
@@ -108,6 +112,10 @@ enum Command {
         /// Where to record what was replaced, for `khr revert`.
         #[arg(long, value_name = "FILE")]
         log: Option<PathBuf>,
+
+        /// Read balloons left to right; manga and manhwa read the other way.
+        #[arg(long)]
+        left_to_right: bool,
     },
 
     /// Inspect, load and unload models on the local LM Studio server.
@@ -339,22 +347,26 @@ async fn main() -> Result<()> {
         Command::Post {
             project,
             pages,
+            skip,
             base_url,
             model,
             instructions,
             batch,
             dry_run,
             log,
+            left_to_right,
         } => {
             post(
                 &project,
                 pages,
+                skip,
                 &base_url,
                 &model,
                 instructions,
                 batch,
                 dry_run,
                 log,
+                !left_to_right,
             )
             .await
         }
@@ -655,12 +667,14 @@ fn extract_json(reply: &str) -> Option<&str> {
 async fn post(
     project: &PathBuf,
     limit: Option<usize>,
+    skip: usize,
     base_url: &str,
     model: &str,
     instructions: PathBuf,
     batch: usize,
     dry_run: bool,
     log: Option<PathBuf>,
+    right_to_left: bool,
 ) -> Result<()> {
     anyhow::ensure!(batch > 0, "batch size must be at least 1");
     let instructions = std::fs::read_to_string(&instructions)
@@ -675,40 +689,112 @@ async fn post(
     let allowed = limit.map(|limit| {
         snapshot
             .pages()
+            .skip(skip)
             .take(limit)
             .map(|page| page.id())
             .collect::<std::collections::BTreeSet<_>>()
     });
 
-    // Only entities carrying both texts qualify: the corrector rewrites an
-    // existing translation and never creates one.
-    let mut pending = Vec::new();
+    // Blocks travel grouped by page and in reading order, because a balloon on
+    // its own carries no scene. "I'm leaving" is a farewell or a climax
+    // depending on the panels around it, and a corrector handed one isolated
+    // string has no way to tell them apart; handed the page, it does.
+    let page_ids: std::collections::BTreeSet<_> =
+        snapshot.pages().map(|page| page.id()).collect();
+    let mut by_page: BTreeMap<usize, Vec<(usize, koharu_scene::EntityId, String, Translation)>> =
+        BTreeMap::new();
+    let page_order: BTreeMap<_, _> = snapshot
+        .pages()
+        .enumerate()
+        .map(|(index, page)| (page.id(), index))
+        .collect();
+    let mut unplaced = 0_usize;
+
     for entity in snapshot.entities_with::<SourceText>()? {
         let id = entity.id();
         let content = snapshot.text_content(id)?;
         let (Some(source), Some(translation)) = (content.source()?, content.translation()?) else {
             continue;
         };
-        if let Some(allowed) = &allowed {
-            let mut cursor = Some(id);
-            let mut inside = false;
-            while let Some(current) = cursor {
-                if allowed.contains(&current) {
-                    inside = true;
-                    break;
-                }
-                cursor = snapshot.parent(current)?;
+        let mut cursor = Some(id);
+        let mut page = None;
+        while let Some(current) = cursor {
+            if page_ids.contains(&current) {
+                page = Some(current);
+                break;
             }
-            if !inside {
-                continue;
+            cursor = snapshot.parent(current)?;
+        }
+        let Some(page) = page else {
+            unplaced += 1;
+            continue;
+        };
+        if let Some(allowed) = &allowed
+            && !allowed.contains(&page)
+        {
+            continue;
+        }
+        let index = page_order[&page];
+        by_page
+            .entry(index)
+            .or_default()
+            .push((0, id, source.text.value, translation));
+    }
+
+    // Order each page as it is read. A block whose region has no geometry keeps
+    // its original position rather than being dropped.
+    for (_, blocks) in by_page.iter_mut() {
+        let mut placed: Vec<(usize, Placement)> = Vec::new();
+        for (position, (_, id, _, _)) in blocks.iter().enumerate() {
+            let place = snapshot
+                .text_content(*id)
+                .ok()
+                .and_then(|content| content.source_region().ok().flatten())
+                .and_then(|region| {
+                    snapshot
+                        .component::<koharu_scene::Geometry>(region.id())
+                        .ok()
+                        .flatten()
+                })
+                .as_ref()
+                .and_then(placement);
+            if let Some(place) = place {
+                placed.push((position, place));
             }
         }
-        pending.push((id, source.text.value, translation));
+        if placed.len() == blocks.len() {
+            sort_reading_order(&mut placed, right_to_left);
+            let ordered: Vec<_> = placed
+                .iter()
+                .map(|(position, _)| blocks[*position].clone())
+                .collect();
+            *blocks = ordered;
+        }
     }
+
+    // Batches never span pages: the context that disambiguates a balloon is its
+    // own scene, and padding a request with neighbouring pages dilutes it. A
+    // page longer than the batch is split, but two pages never share a request.
+    let batches: Vec<Vec<_>> = by_page
+        .into_values()
+        .flat_map(|blocks| {
+            blocks
+                .into_iter()
+                .map(|(_, id, source, t)| (id, source, t))
+                .collect::<Vec<_>>()
+                .chunks(batch)
+                .map(<[_]>::to_vec)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let pending: Vec<_> = batches.iter().flatten().cloned().collect();
 
     if pending.is_empty() {
         eprintln!("nothing to correct: no entity carries both a source text and a translation");
         return Ok(());
+    }
+    if unplaced > 0 {
+        eprintln!("{unplaced} block(s) belong to no page and were skipped");
     }
     eprintln!("correcting {} block(s) in batches of {batch}", pending.len());
 
@@ -717,7 +803,7 @@ async fn post(
 
     let mut accepted = Vec::new();
     let mut rejected = 0_usize;
-    for (index, chunk) in pending.chunks(batch).enumerate() {
+    for (index, chunk) in batches.iter().enumerate() {
         let payload = serde_json::json!({
             "bloques": chunk
                 .iter()
@@ -1594,4 +1680,62 @@ async fn bench(
         );
     }
     Ok(())
+}
+
+/// Where a block sits on its page, as the centre of its detected region.
+#[derive(Clone, Copy)]
+struct Placement {
+    x: f64,
+    y: f64,
+    height: f64,
+}
+
+fn placement(geometry: &koharu_scene::Geometry) -> Option<Placement> {
+    let points = &geometry.points;
+    if points.is_empty() {
+        return None;
+    }
+    let (mut left, mut right) = (f64::MAX, f64::MIN);
+    let (mut top, mut bottom) = (f64::MAX, f64::MIN);
+    for point in points {
+        left = left.min(point.x);
+        right = right.max(point.x);
+        top = top.min(point.y);
+        bottom = bottom.max(point.y);
+    }
+    Some(Placement {
+        x: (left + right) / 2.0,
+        y: (top + bottom) / 2.0,
+        height: (bottom - top).max(1.0),
+    })
+}
+
+/// Sorts a page's blocks into reading order.
+///
+/// Balloons are read row by row, so blocks are first banded by vertical
+/// position and then ordered within each band. Japanese and Chinese pages run
+/// right to left; Korean webtoons and western releases run left to right, which
+/// is why the direction is chosen by the caller rather than assumed.
+///
+/// Banding uses the median block height as the row tolerance: balloons on the
+/// same row rarely align exactly, and comparing raw `y` would interleave them.
+fn sort_reading_order(blocks: &mut [(usize, Placement)], right_to_left: bool) {
+    if blocks.is_empty() {
+        return;
+    }
+    let mut heights: Vec<f64> = blocks.iter().map(|(_, place)| place.height).collect();
+    heights.sort_by(|left, right| left.total_cmp(right));
+    let band = heights[heights.len() / 2].max(1.0);
+
+    blocks.sort_by(|(_, left), (_, right)| {
+        let left_band = (left.y / band).floor();
+        let right_band = (right.y / band).floor();
+        left_band.total_cmp(&right_band).then_with(|| {
+            if right_to_left {
+                right.x.total_cmp(&left.x)
+            } else {
+                left.x.total_cmp(&right.x)
+            }
+        })
+    });
 }
