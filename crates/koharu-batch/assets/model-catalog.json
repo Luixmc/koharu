@@ -6,25 +6,6 @@
   },
   "modelos": [
     {
-      "id": "qwen3.5-9b-uncensored",
-      "repo": "HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive",
-      "archivo": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf",
-      "gb": 6.9,
-      "tareas": [
-        "traducir"
-      ],
-      "idiomas": {
-        "ja": "?",
-        "ko": "?",
-        "zh": "?",
-        "en": "?"
-      },
-      "medido": {
-        "corregir": "malo: falla lotes enteros pese al esquema forzado"
-      },
-      "nota": "Base Qwen sin censura. Buen candidato para traducir CJK; descartado como corrector."
-    },
-    {
       "id": "thedrummer_cydonia-24b-v4.3",
       "repo": "bartowski/TheDrummer_Cydonia-24B-v4.3-GGUF",
       "archivo": "TheDrummer_Cydonia-24B-v4.3-IQ4_XS.gguf",
@@ -236,7 +217,7 @@
       "id": "llama-3-korean-bllossom-8b",
       "repo": "MLP-KTLim/llama-3-Korean-Bllossom-8B-gguf-Q4_K_M",
       "archivo": "llama-3-Korean-Bllossom-8B-Q4_K_M.gguf",
-      "gb": 4.9,
+      "gb": 4.6,
       "tareas": [
         "traducir",
         "corregir"
@@ -286,13 +267,13 @@
       "nota": "SIN PROBAR. Serie Sakura, orientada a traducir novelas ligeras. Muy poco descargado, asi que hay menos experiencia ajena en la que apoyarse."
     },
     {
-      "id": "qwen3.8-27b",
-      "repo": "unsloth/Qwen3.8-27B-GGUF",
-      "archivo": "Qwen3.8-27B-UD-IQ4_XS.gguf",
-      "gb": 13.3,
+      "id": "llama-3-elyza-jp-8b",
+      "repo": "elyza/Llama-3-ELYZA-JP-8B-GGUF",
+      "archivo": "Llama-3-ELYZA-JP-8B-q4_k_m.gguf",
+      "gb": 4.6,
       "tareas": [
-        "corregir",
-        "traducir"
+        "traducir",
+        "corregir"
       ],
       "idiomas": {
         "ja": "?",
@@ -301,16 +282,16 @@
         "en": "?"
       },
       "medido": {},
-      "nota": "SIN PROBAR. El mayor que entra en 16 GB dejando margen de contexto. CJK nativo."
+      "nota": "SIN PROBAR, para japones. Llama-3 ampliado con japones por ELYZA."
     },
     {
-      "id": "supergemma4-26b-uncensored",
-      "repo": "Jiunsong/supergemma4-26b-uncensored-gguf-v2",
-      "archivo": "supergemma4-26b-uncensored-fast-v2-Q4_K_M.gguf",
-      "gb": 15.6,
+      "id": "swallow-9b-heretic",
+      "repo": "ChiKoi7/Gemma-2-Llama-Swallow-9b-it-v0.1-Heretic-GGUF",
+      "archivo": "Gemma-2-Llama-Swallow-9b-it-v0.1-Heretic_Q5_K_M.gguf",
+      "gb": 6.2,
       "tareas": [
-        "corregir",
-        "traducir"
+        "traducir",
+        "corregir"
       ],
       "idiomas": {
         "ja": "?",
@@ -319,16 +300,16 @@
         "en": "?"
       },
       "medido": {},
-      "nota": "SIN PROBAR. Ocupa casi toda una tarjeta de 16 GB: deja apenas margen para el contexto y obliga a descargar capas a CPU."
+      "nota": "SIN PROBAR, para japones. Gemma-2 con japones de Swallow, sin censura."
     },
     {
-      "id": "qwen3.6-35b-a3b",
-      "repo": "unsloth/Qwen3.6-35B-A3B-GGUF",
-      "archivo": "Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
-      "gb": 16.5,
+      "id": "qwenpaw-flash-9b",
+      "repo": "SC117/QwenPaw-Flash-9B-heretic-GGUF",
+      "archivo": "QwenPaw-Flash-9B-heretic-Q4_K_M.gguf",
+      "gb": 5.2,
       "tareas": [
-        "corregir",
-        "traducir"
+        "traducir",
+        "corregir"
       ],
       "idiomas": {
         "ja": "?",
@@ -337,9 +318,28 @@
         "en": "?"
       },
       "medido": {},
-      "nota": "SIN PROBAR. NO ENTRA en 16 GB de video. Mezcla de expertos con 3B activos, asi que repartido con la CPU seria mas llevadero que un denso del mismo tamano, pero aun asi lento."
+      "nota": "SIN PROBAR, para chino. Base Qwen sin censura, ligero."
+    },
+    {
+      "id": "gemma-4-12b-uncensored",
+      "repo": "zaakirio/gemma-4-12b-it-uncensored-GGUF",
+      "archivo": "gemma-4-12b-it-uncensored-Q5_K_M.gguf",
+      "gb": 8.0,
+      "tareas": [
+        "traducir",
+        "corregir"
+      ],
+      "idiomas": {
+        "ja": "?",
+        "ko": "?",
+        "zh": "?",
+        "en": "?"
+      },
+      "medido": {},
+      "nota": "SIN PROBAR, para chino. El mayor del lote; aun deja margen de contexto."
     }
   ],
   "_nota_idiomas": "Un corrector necesita DOS capacidades: leer el idioma de partida para detectar lo que la traduccion perdio, y escribir buen espanol. Un modelo nativo del idioma de partida suele ganar en lo primero y perder en lo segundo; medir ambas cosas es el proposito de khr bench.",
-  "_nota_dos_pasadas": "Cuando ningun corrector especializado entiende el idioma de partida, conviene que el mismo modelo haga las dos pasadas: si comprende el original lo bastante para traducirlo, tambien lo comprende para revisar su propia salida, y se evita cargar un segundo modelo."
+  "_nota_dos_pasadas": "Cuando ningun corrector especializado entiende el idioma de partida, conviene que el mismo modelo haga las dos pasadas: si comprende el original lo bastante para traducirlo, tambien lo comprende para revisar su propia salida, y se evita cargar un segundo modelo.",
+  "_nota_tamano": "Medido en una tarjeta de 16 GB: un modelo de 13 GB empato en aciertos con uno de 5 GB y tardo treinta veces mas, porque junto al contexto ya no cabe y se reparte con la CPU. Conviene quedarse por debajo de unos 8 GB."
 }

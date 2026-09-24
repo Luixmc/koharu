@@ -48,6 +48,18 @@ enum Command {
         /// Repeat to measure how stable the model is.
         #[arg(long, default_value_t = 1)]
         runs: usize,
+
+        /// Translate from the source instead of correcting existing Spanish.
+        #[arg(long)]
+        translate: bool,
+
+        /// Passes over the text; after the first, every pass corrects.
+        #[arg(long, default_value_t = 1)]
+        passes: usize,
+
+        /// Model to correct with from the second pass on, swapped in automatically.
+        #[arg(long)]
+        corrector: Option<String>,
     },
 
     /// Print the recognized text of a project without modifying it.
@@ -352,7 +364,22 @@ async fn main() -> Result<()> {
             instructions,
             languages,
             runs,
-        } => bench(&base_url, &model, instructions, languages, runs).await,
+            translate,
+            passes,
+            corrector,
+        } => {
+            bench(
+                &base_url,
+                &model,
+                corrector,
+                instructions,
+                languages,
+                runs,
+                translate,
+                passes,
+            )
+            .await
+        }
         Command::Models { action } => models(action).await,
         Command::Revert {
             project,
@@ -1165,9 +1192,17 @@ fn remove_model(id: &str) -> Result<()> {
     let catalog = catalog()?;
     // A catalog entry names its file exactly; anything else is matched by
     // scanning, so models imported by hand can be removed too.
-    if let Some(entry) = catalog.modelos.iter().find(|entry| entry.id == id) {
-        let path = installed_path(entry)?;
-        anyhow::ensure!(path.exists(), "{id} is not installed");
+    // A catalog entry only resolves to a path when the file kept the name the
+    // repository gave it. One renamed on the way in, or imported by hand, still
+    // has to be removable, so a missing path falls through to the scan below
+    // rather than reporting the model as absent.
+    if let Some(path) = catalog
+        .modelos
+        .iter()
+        .find(|entry| entry.id == id)
+        .and_then(|entry| installed_path(entry).ok())
+        .filter(|path| path.exists())
+    {
         let size = std::fs::metadata(&path)?.len();
         std::fs::remove_file(&path)?;
         let _ = std::fs::remove_dir(path.parent().expect("the path has a parent"));
@@ -1249,9 +1284,23 @@ fn import_model(file: &PathBuf, publisher: &str, name: Option<String>) -> Result
     Ok(())
 }
 
+
 /// Test cases, shipped with the binary so a run needs no external files and the
 /// cases stay versioned alongside the checks that read them.
 const BENCH_CASES: &str = include_str!("../assets/bench-cases.json");
+
+/// Framing for a first pass that translates from scratch.
+///
+/// Separate from the correction framing because the tasks differ: translating
+/// reads one text and writes another, while correcting compares two and decides
+/// what to change. Mixing them was what made a model echo its input.
+const FORMAT_APPENDIX_TRANSLATE: &str = "\n\nFORMATO DE INTERCAMBIO\n\n\
+ENTRADA: un objeto JSON con la clave \"bloques\". Cada bloque trae \"id\" y\n\
+\"ref\": el texto de partida que debes traducir al espanol.\n\n\
+SALIDA: para cada bloque, \"id\" y \"es_corregido\" con la traduccion.\n\n\
+\"es_corregido\" contiene EXCLUSIVAMENTE el texto del globo en espanol.\n\
+Prohibido copiar \"ref\", escribir etiquetas o anadir explicaciones.\n\
+Devuelve exactamente un elemento por cada bloque recibido, con su \"id\".";
 
 #[derive(serde::Deserialize)]
 struct BenchCase {
@@ -1292,10 +1341,10 @@ fn bench_cases(languages: Option<&str>) -> Result<BTreeMap<String, Vec<BenchCase
 
 /// Decides whether a reply satisfies a case.
 ///
-/// The checks are deliberately loose about wording: a correction may legitimately
-/// phrase things differently, so a case asserts the presence or absence of a
-/// distinguishing fragment rather than an exact sentence. `igual` is the
-/// exception, and ignores only trailing punctuation.
+/// The checks stay loose about wording: a translation may phrase things several
+/// valid ways, so a case asserts a distinguishing fragment rather than an exact
+/// sentence. `igual` only makes sense when correcting, since it asks that
+/// already-correct text be left alone.
 fn case_passes(case: &BenchCase, reply: &str) -> bool {
     let reply = reply.trim();
     let lowered = reply.to_lowercase();
@@ -1304,10 +1353,13 @@ fn case_passes(case: &BenchCase, reply: &str) -> bool {
             .value
             .iter()
             .any(|needle| lowered.contains(&needle.to_lowercase())),
-        "no_contiene" => !case
-            .value
-            .iter()
-            .any(|needle| lowered.contains(&needle.to_lowercase())),
+        "no_contiene" => {
+            !reply.is_empty()
+                && !case
+                    .value
+                    .iter()
+                    .any(|needle| lowered.contains(&needle.to_lowercase()))
+        }
         "igual" => {
             let normalize = |text: &str| {
                 text.trim()
@@ -1320,105 +1372,199 @@ fn case_passes(case: &BenchCase, reply: &str) -> bool {
     }
 }
 
+/// Sends one batch and returns the reply keyed by block id.
+async fn ask_model(
+    client: &reqwest::Client,
+    endpoint: &str,
+    model: &str,
+    system: &str,
+    blocks: serde_json::Value,
+) -> Result<Option<BTreeMap<usize, String>>> {
+    let user = serde_json::to_string(&blocks)?;
+    let request = ChatRequest {
+        model,
+        messages: vec![
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: &user,
+            },
+        ],
+        temperature: 0.2,
+        stream: false,
+        response_format: correction_schema(),
+    };
+    let response: ChatResponse = client
+        .post(endpoint)
+        .json(&request)
+        .send()
+        .await
+        .with_context(|| format!("request to {endpoint} failed"))?
+        .error_for_status()
+        .context("the model returned an error")?
+        .json()
+        .await
+        .context("malformed response")?;
+    let reply = response
+        .choices
+        .first()
+        .map(|choice| choice.message.content.as_str())
+        .unwrap_or_default();
+    Ok(extract_json(reply)
+        .and_then(|json| serde_json::from_str::<CorrectionBatch>(json).ok())
+        .map(|parsed| {
+            parsed
+                .bloques
+                .into_iter()
+                .map(|item| (item.id, item.es_corregido))
+                .collect()
+        }))
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn bench(
     base_url: &str,
     model: &str,
+    corrector: Option<String>,
     instructions: PathBuf,
     languages: Option<String>,
     runs: usize,
+    translate: bool,
+    passes: usize,
 ) -> Result<()> {
     anyhow::ensure!(runs > 0, "at least one run is required");
+    anyhow::ensure!(passes > 0, "at least one pass is required");
+    if corrector.is_some() {
+        anyhow::ensure!(passes > 1, "a separate corrector needs more than one pass");
+    }
     let cases = bench_cases(languages.as_deref())?;
     let instructions = std::fs::read_to_string(&instructions)
         .with_context(|| format!("failed to read {}", instructions.display()))?;
-    let system = format!("{}{FORMAT_APPENDIX}", instructions.trim());
+    let instructions = instructions.trim();
+    let translating = format!("{instructions}{FORMAT_APPENDIX_TRANSLATE}");
+    let correcting = format!("{instructions}{FORMAT_APPENDIX}");
 
     let client = reqwest::Client::new();
     let endpoint = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
     let mut totals: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut elapsed_by_pass: BTreeMap<usize, Duration> = BTreeMap::new();
 
     for run in 1..=runs {
         eprintln!("--- run {run} of {runs} ---");
-        for (language, items) in &cases {
-            let payload = serde_json::json!({
-                "bloques": items
-                    .iter()
-                    .enumerate()
-                    .map(|(id, case)| serde_json::json!({
-                        "id": id,
-                        "es": case.es,
-                        "ref": case.reference,
-                    }))
-                    .collect::<Vec<_>>(),
-            });
-            let user = serde_json::to_string(&payload)?;
-            let request = ChatRequest {
-                model,
-                messages: vec![
-                    ChatMessage {
-                        role: "system",
-                        content: &system,
-                    },
-                    ChatMessage {
-                        role: "user",
-                        content: &user,
-                    },
-                ],
-                temperature: 0.2,
-                stream: false,
-                response_format: correction_schema(),
-            };
-            let response: ChatResponse = client
-                .post(&endpoint)
-                .json(&request)
-                .send()
-                .await
-                .with_context(|| format!("request to {endpoint} failed"))?
-                .error_for_status()
-                .context("the model returned an error")?
-                .json()
-                .await
-                .context("malformed response")?;
-            let reply = response
-                .choices
-                .first()
-                .map(|choice| choice.message.content.as_str())
-                .unwrap_or_default();
+        // Every language is carried through the passes together so that a
+        // separate corrector is swapped in once per pass rather than once per
+        // language: the weights do not fit alongside the translator, and each
+        // exchange costs far more than a request.
+        let mut state: BTreeMap<String, Vec<String>> = cases
+            .iter()
+            .map(|(language, items)| {
+                (
+                    language.clone(),
+                    items.iter().map(|case| case.es.clone()).collect(),
+                )
+            })
+            .collect();
+        let mut broken: Vec<String> = Vec::new();
 
-            // An unparsable reply scores zero rather than aborting: failing to
-            // hold the format is itself a result worth recording, and it is how
-            // a model gets ruled out as a corrector.
-            let parsed = extract_json(reply)
-                .and_then(|json| serde_json::from_str::<CorrectionBatch>(json).ok());
-            let Some(parsed) = parsed else {
-                eprintln!("  {language}: unparsable reply, scored 0/{}", items.len());
-                totals.entry(language.clone()).or_default().push(0);
-                continue;
+        for pass in 1..=passes {
+            let active = match (&corrector, pass) {
+                (Some(corrector), 2) => {
+                    eprintln!("  cambiando a {corrector} para corregir");
+                    let _ = run_lms(&["unload", "--all"]);
+                    run_lms(&["load", corrector, "--gpu", "max", "-y"])?;
+                    corrector.as_str()
+                }
+                (Some(corrector), pass) if pass > 2 => corrector.as_str(),
+                _ => model,
             };
-            let by_id: BTreeMap<usize, String> = parsed
-                .bloques
-                .into_iter()
-                .map(|item| (item.id, item.es_corregido))
-                .collect();
+            let system = if translate && pass == 1 {
+                &translating
+            } else {
+                &correcting
+            };
 
-            let mut passed = 0;
-            for (id, case) in items.iter().enumerate() {
-                let reply = by_id.get(&id).map(String::as_str).unwrap_or_default();
-                if case_passes(case, reply) {
-                    passed += 1;
-                } else if run == 1 {
-                    eprintln!("  {language} FALLA: {}", case.trampa);
-                    eprintln!("      entrada: {:?}", case.es);
-                    eprintln!("      salida : {reply:?}");
+            for (language, items) in &cases {
+                if broken.contains(language) {
+                    continue;
+                }
+                let current = &state[language];
+                let blocks = serde_json::json!({
+                    "bloques": items
+                        .iter()
+                        .enumerate()
+                        .map(|(id, case)| if translate && pass == 1 {
+                            serde_json::json!({ "id": id, "ref": case.reference })
+                        } else {
+                            serde_json::json!({
+                                "id": id,
+                                "es": current[id],
+                                "ref": case.reference,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                });
+                let started = Instant::now();
+                let reply = ask_model(&client, &endpoint, active, system, blocks).await?;
+                *elapsed_by_pass.entry(pass).or_default() += started.elapsed();
+
+                match reply {
+                    Some(reply) => {
+                        let current = state.get_mut(language).expect("language was seeded");
+                        for (id, value) in reply {
+                            if id < current.len() {
+                                current[id] = value;
+                            }
+                        }
+                    }
+                    None => {
+                        eprintln!("  {language} pasada {pass}: respuesta ilegible, puntua 0");
+                        broken.push(language.clone());
+                    }
                 }
             }
+        }
+
+        for (language, items) in &cases {
+            let passed = if broken.contains(language) {
+                0
+            } else {
+                let current = &state[language];
+                items
+                    .iter()
+                    .enumerate()
+                    .filter(|(id, case)| {
+                        // `igual` asks that correct text be left untouched, which
+                        // has no meaning when the text was just translated.
+                        if translate && case.check == "igual" {
+                            return true;
+                        }
+                        let got = current.get(*id).map(String::as_str).unwrap_or_default();
+                        let ok = case_passes(case, got);
+                        if !ok && run == 1 {
+                            eprintln!("  {language} FALLA: {}", case.trampa);
+                            eprintln!("      salida: {got:?}");
+                        }
+                        ok
+                    })
+                    .count()
+            };
             eprintln!("  {language}: {passed}/{}", items.len());
             totals.entry(language.clone()).or_default().push(passed);
         }
     }
 
     println!();
-    println!("=== {model} ===");
+    let quien = match &corrector {
+        Some(corrector) => format!("{model} -> {corrector}"),
+        None => model.to_owned(),
+    };
+    println!(
+        "=== {quien} | {} | {passes} pasada(s) ===",
+        if translate { "traducir" } else { "corregir" }
+    );
     let mut total = 0;
     let mut possible = 0;
     for (language, scores) in &totals {
@@ -1428,15 +1574,24 @@ async fn bench(
         let sum: usize = scores.iter().sum();
         total += sum;
         possible += items * scores.len();
-        let estable = if best == worst { "estable" } else { "variable" };
         println!(
-            "{language}: {:.1}/{items} de media  (peor {worst}, mejor {best}, {estable})",
-            sum as f64 / scores.len() as f64
+            "{language}: {:.1}/{items} de media  (peor {worst}, mejor {best}, {})",
+            sum as f64 / scores.len() as f64,
+            if best == worst { "estable" } else { "variable" }
         );
     }
     println!(
         "global: {:.0}% ({total}/{possible})",
         total as f64 / possible as f64 * 100.0
     );
+    let mut acumulado = Duration::ZERO;
+    for (pass, elapsed) in &elapsed_by_pass {
+        acumulado += *elapsed;
+        println!(
+            "pasada {pass}: {:.1}s   (acumulado {:.1}s)",
+            elapsed.as_secs_f64(),
+            acumulado.as_secs_f64()
+        );
+    }
     Ok(())
 }
