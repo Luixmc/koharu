@@ -1,5 +1,5 @@
 {
-  "_nota": "Casos para evaluar traductores y correctores de manga adulto. Cada caso trae el texto de partida (ref), una version en espanol con el fallo tipico (es) y una comprobacion: 'contiene' exige alguna variante, 'no_contiene' las prohibe, 'igual' exige no alterar el texto. Las frases son ejemplos redactados para la prueba, no citas de ninguna obra.",
+  "_nota": "Casos para evaluar traductores y correctores de manga adulto. Cada caso trae el texto de partida (ref), una version en espanol con el fallo tipico (es) y una comprobacion: 'contiene' exige alguna variante, 'no_contiene' las prohibe, 'igual' exige no alterar el texto. Las frases son ejemplos redactados para la prueba, no citas de ninguna obra. Todos los personajes son adultos.",
 
   "_nota_controles": "Cada idioma incluye casos marcados como control: frases NO sexuales que usan el mismo vocabulario ambiguo. Sirven para medir la sobre-interpretacion, porque un corrector predispuesto a leerlo todo en clave sexual convierte una despedida en un orgasmo y ese error es peor que el original: aparece en paginas que nadie sospecharia revisar.",
 
@@ -33,8 +33,8 @@
       "value": ["comodo", "cómodo"], "trampa": "kimochi ii es placer, no comodidad" },
     { "es": "Es inutil.", "ref": "だめってば。", "check": "no_contiene",
       "value": ["inutil", "inútil"], "trampa": "dame aqui es 'no' o 'basta'" },
-    { "es": "Hermano mayor, para.", "ref": "お兄ちゃん、やめて…", "check": "contiene",
-      "value": ["onii", "nii", "hermano"], "trampa": "honorifico: conservarlo o traducirlo, no omitirlo" },
+    { "es": "Superior, para.", "ref": "先輩、やめて…", "check": "contiene",
+      "value": ["senpai", "sempai"], "trampa": "honorifico: conservar senpai, no traducirlo como cargo" },
     { "es": "Doki doki", "ref": "ドキドキ", "check": "no_contiene",
       "value": ["doki"], "trampa": "onomatopeya: llevarla a un equivalente en espanol" },
     { "es": "Adentro no.", "ref": "中はだめっ…", "check": "contiene",
@@ -45,7 +45,7 @@
       "value": ["vergon", "vergüen", "pena"], "trampa": "hazukashii: pudor, tono sumiso" },
     { "es": "Me voy a casa.", "ref": "家に帰るよ。", "check": "no_contiene",
       "value": ["veng", "acab", "corr"], "trampa": "CONTROL: volver a casa, sin lectura sexual" },
-    { "es": "Vamos al colegio.", "ref": "学校に行こう。", "check": "no_contiene",
+    { "es": "Vamos a la oficina.", "ref": "会社に行こう。", "check": "no_contiene",
       "value": ["veng", "acab", "corr"], "trampa": "CONTROL: iku literal de desplazamiento" }
   ],
 
@@ -56,8 +56,8 @@
       "value": ["facil", "fácil"], "trampa": "sunjoroptda es 'ir bien', no 'facil'" },
     { "es": "Parecia que iba a ir bien.", "ref": "앞으로도 순조로울 것 같았는데…", "check": "contiene",
       "value": ["adelante", "ahora en", "futuro", "también", "tambien"], "trampa": "la particula do (tambien) no se puede omitir" },
-    { "es": "Oye, hermano.", "ref": "오빠…", "check": "contiene",
-      "value": ["oppa", "hermano"], "trampa": "oppa: conservarlo o traducirlo con criterio constante" },
+    { "es": "Oye, superior.", "ref": "선배…", "check": "contiene",
+      "value": ["senpai", "sunbae", "sonbae"], "trampa": "seonbae: conservar el honorifico con criterio constante, no traducirlo como cargo" },
     { "es": "Se siente comodo.", "ref": "좀 좋아…", "check": "no_contiene",
       "value": ["comodo", "cómodo"], "trampa": "joah aqui es placer, no comodidad" },
     { "es": "Adentro no.", "ref": "안에는 안 돼…", "check": "contiene",
@@ -77,8 +77,8 @@
       "value": ["veng", "venir", "acab", "corr"], "trampa": "en escena sexual no es marcharse" },
     { "es": "Estoy comodo.", "ref": "好舒服…", "check": "no_contiene",
       "value": ["comodo", "cómodo"], "trampa": "shufu aqui es placer fisico" },
-    { "es": "Hermano.", "ref": "哥哥…", "check": "contiene",
-      "value": ["hermano"], "trampa": "gege es hermano mayor: no perder la jerarquia" },
+    { "es": "Anciano.", "ref": "老公…", "check": "contiene",
+      "value": ["esposo", "marido", "cariño", "carino", "amor", "querido"], "trampa": "laogong es el esposo o un apelativo de pareja, no un anciano" },
     { "es": "Una pieza de persona.", "ref": "一个人", "check": "no_contiene",
       "value": ["pieza"], "trampa": "los clasificadores no se traducen literalmente" },
     { "es": "Adentro no.", "ref": "不要在里面…", "check": "contiene",
@@ -89,7 +89,7 @@
       "value": ["vergon", "vergüen", "pena"], "trampa": "xiuse: pudor" },
     { "es": "Mas fuerte.", "ref": "再用力一点…", "check": "contiene",
       "value": ["fuerte", "duro", "recio"], "trampa": "yongli: intensidad fisica" },
-    { "es": "Me voy a la escuela.", "ref": "我要去学校了。", "check": "no_contiene",
+    { "es": "Me voy a la oficina.", "ref": "我要去公司了。", "check": "no_contiene",
       "value": ["veng", "acab", "corr"], "trampa": "CONTROL: qu literal de desplazamiento" },
     { "es": "La cama es comoda.", "ref": "床很舒服。", "check": "contiene",
       "value": ["comod", "cómod"], "trampa": "CONTROL: aqui shufu SI es comodidad" }
