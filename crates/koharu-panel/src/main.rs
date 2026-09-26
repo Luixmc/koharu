@@ -1,6 +1,7 @@
 //! Small desktop panel over `khr`: pick a project, tick the stages, run them
-//! in order and watch the output. Every step is a child process, so the panel
-//! holds no models and a crash in a stage never takes the window down.
+//! in order and watch the output. Projects can be queued one after another.
+//! Every step is a child process, so the panel holds no models and a crash in
+//! a stage never takes the window down.
 
 #![windows_subsystem = "windows"]
 
@@ -16,24 +17,46 @@ use std::time::SystemTime;
 use eframe::egui;
 
 const PROJECTS_DIR: &str = r"I:\Usuario\Documentos\Koharu";
-const INSTRUCTIONS: &str = r"I:\Koharu\prompts\05-postproceso.txt";
-const LOGS_DIR: &str = r"I:\Koharu\registros";
-const DEFAULT_CORRECTOR: &str = "thedrummer_cydonia-24b-v4.3";
+const WORKS_DIR: &str = r"I:\Koharu\obras";
+const GLOBAL_GLOSSARY: &str = r"I:\Koharu\glosario.tsv";
+const DEFAULT_CORRECTOR: &str = "gemma-4-12b-it-qat";
+/// Source languages; khr picks the OCR that reads each one best.
+const LANGUAGES: [(&str, &str); 4] =
+    [("ja", "Japonés"), ("ko", "Coreano"), ("zh", "Chino"), ("en", "Inglés")];
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_LINES: usize = 5000;
 
-const STAGES: [(&str, &str); 4] = [
+/// Koharu's own stages, run first while the card is free of the LLM.
+const STAGES: [(&str, &str); 3] = [
     ("detection", "1. Detectar globos"),
     ("ocr", "2. Reconocer texto (OCR)"),
-    ("translation", "3. Traducir (DeepL)"),
-    ("inpainting", "4. Limpiar texto original"),
+    ("inpainting", "3. Borrar texto original"),
 ];
 
 /// What to do once a step exits successfully.
 enum After {
     Nothing,
-    ReviewCorrections { project: PathBuf, log: PathBuf },
-    DeleteLog(PathBuf),
+    ShowProposals,
+    ShowCorrections,
+}
+
+/// One proposed correction from `khr revisar`.
+#[derive(Clone)]
+struct Correction {
+    id: String,
+    page: String,
+    original: String,
+    current: String,
+    proposal: String,
+    reason: String,
+}
+
+/// One glossary line: original, rendering and an optional note.
+#[derive(Clone)]
+struct Term {
+    source: String,
+    target: String,
+    note: String,
 }
 
 struct Step {
@@ -55,13 +78,17 @@ struct Panel {
     koharu: PathBuf,
     projects: Vec<PathBuf>,
     selected: Option<usize>,
-    stages: [bool; 4],
-    correct: bool,
+    stages: [bool; 3],
+    study: bool,
+    translate: bool,
+    review_step: bool,
+    llm_translation: bool,
     corrector: String,
     pages: u32,
     left_to_right: bool,
-    review: bool,
+    idioma: usize,
     queue: VecDeque<Step>,
+    queued_projects: Vec<String>,
     current: Option<Step>,
     failed: bool,
     child: Arc<Mutex<Option<Child>>>,
@@ -69,6 +96,16 @@ struct Panel {
     lines: Vec<String>,
     partial: String,
     status: String,
+    glossary_open: bool,
+    proposals: Vec<Term>,
+    approved: usize,
+    /// This work's approved terms, to copy into the global glossary.
+    work_terms: Vec<Term>,
+    corrections_open: bool,
+    corrections: Vec<Correction>,
+    approved_corrections: usize,
+    /// Correction being turned into a glossary term: (original, rendering).
+    new_term: Option<(String, String)>,
 }
 
 impl Panel {
@@ -88,13 +125,17 @@ impl Panel {
             koharu: local.join(r"koharu\koharu.exe"),
             projects: Vec::new(),
             selected: None,
-            stages: [true; 4],
-            correct: true,
+            stages: [true; 3],
+            study: true,
+            translate: true,
+            review_step: true,
+            llm_translation: true,
             corrector: DEFAULT_CORRECTOR.to_owned(),
             pages: 0,
             left_to_right: false,
-            review: true,
+            idioma: 0,
             queue: VecDeque::new(),
+            queued_projects: Vec::new(),
             current: None,
             failed: false,
             child: Arc::new(Mutex::new(None)),
@@ -103,6 +144,14 @@ impl Panel {
             partial: String::new(),
             status: "Listo. El proyecto se crea en Koharu (importar imágenes); aquí se procesa."
                 .to_owned(),
+            glossary_open: false,
+            proposals: Vec::new(),
+            approved: 0,
+            work_terms: Vec::new(),
+            corrections_open: false,
+            corrections: Vec::new(),
+            approved_corrections: 0,
+            new_term: None,
         };
         panel.reload_projects();
         panel
@@ -123,6 +172,34 @@ impl Panel {
         self.selected = previous
             .and_then(|prev| self.projects.iter().position(|path| *path == prev))
             .or(if self.projects.is_empty() { None } else { Some(0) });
+        self.project_changed();
+    }
+
+    /// Everything shown about a project (terms, corrections, the language)
+    /// belongs to it; a switch reloads it all instead of leaving the previous
+    /// project's lists on screen.
+    fn project_changed(&mut self) {
+        self.guess_language();
+        self.new_term = None;
+        self.load_glossary();
+        self.load_corrections();
+        self.status = self
+            .project()
+            .and_then(Path::file_stem)
+            .map(|name| format!("Proyecto: {}", name.to_string_lossy()))
+            .unwrap_or_default();
+    }
+
+    /// Projects named "... JA", "... KO", "... ZH" or "... EN" set the source
+    /// language themselves.
+    fn guess_language(&mut self) {
+        let Some(stem) = self.project().and_then(Path::file_stem) else { return };
+        let stem = stem.to_string_lossy().to_lowercase();
+        if let Some(index) = LANGUAGES.iter().position(|(code, _)| {
+            stem.ends_with(&format!(" {code}")) || stem.ends_with(&format!("-{code}"))
+        }) {
+            self.idioma = index;
+        }
     }
 
     fn project(&self) -> Option<&Path> {
@@ -275,142 +352,579 @@ impl Panel {
     fn finish(&mut self, after: After) {
         match after {
             After::Nothing => {}
-            After::DeleteLog(path) => {
-                let _ = std::fs::remove_file(path);
+            After::ShowProposals => {
+                self.load_glossary();
+                self.glossary_open = !self.proposals.is_empty();
             }
-            After::ReviewCorrections { project, log } => self.review_corrections(&project, &log),
+            After::ShowCorrections => {
+                self.load_corrections();
+                self.corrections_open = !self.corrections.is_empty();
+            }
         }
     }
 
-    fn review_corrections(&mut self, project: &Path, log: &Path) {
-        let changes = read_changes(log);
-        self.log("");
-        self.log(format!("--- {} corrección(es) ---", changes.len()));
-        for change in &changes {
-            let field = |key: &str| change[key].as_str().unwrap_or_default().replace('\n', " / ");
-            self.log(format!("- {}", field("before")));
-            self.log(format!("+ {}", field("after")));
-            self.log("");
-        }
-        if changes.is_empty() || !self.review {
-            return;
-        }
-        let keep = rfd::MessageDialog::new()
-            .set_title("Revisar correcciones")
-            .set_description(format!(
-                "Se aplicaron {} correcciones (están en el registro del panel).\n\n¿Las conservo?",
-                changes.len()
-            ))
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .show();
-        if keep == rfd::MessageDialogResult::No {
-            self.push_revert(project, log);
-        }
-    }
-
-    fn push_revert(&mut self, project: &Path, log: &Path) {
-        let khr = self.khr.clone();
-        let project_arg = project.display().to_string();
-        let log_arg = log.display().to_string();
-        self.push(
-            "Deshacer correcciones",
-            &khr,
-            &["revert", "--project", &project_arg, "--log", &log_arg],
-            false,
-            After::DeleteLog(log.to_path_buf()),
-        );
-    }
-
+    /// Runs the ticked steps on the selected project now.
     fn run(&mut self, ctx: &egui::Context) {
-        let Some(project) = self.project().map(Path::to_path_buf) else { return };
-        let stages: Vec<&str> = STAGES
-            .iter()
-            .zip(self.stages)
-            .filter(|(_, on)| *on)
-            .map(|((key, _), _)| *key)
-            .collect();
-        if stages.is_empty() && !self.correct {
-            self.status = "Marca al menos una etapa.".to_owned();
-            return;
-        }
-        let model = self.corrector.trim().to_owned();
-        if self.correct && model.is_empty() {
-            self.status = "Escribe el modelo corrector.".to_owned();
-            return;
-        }
         if !confirm_koharu_closed() {
             return;
         }
         self.lines.clear();
-        self.log(format!("Proyecto: {}", project.display()));
+        self.queued_projects.clear();
+        if self.plan() {
+            self.begin(ctx);
+        }
+    }
 
+    /// Adds the selected project, with the steps and options as they are now,
+    /// after whatever is queued; starts at once when nothing is running.
+    fn enqueue(&mut self, ctx: &egui::Context) {
+        let idle = self.current.is_none() && self.queue.is_empty();
+        if idle && !confirm_koharu_closed() {
+            return;
+        }
+        if idle {
+            self.lines.clear();
+            self.queued_projects.clear();
+        }
+        if self.plan() && idle {
+            self.begin(ctx);
+        }
+    }
+
+    /// Queues the ticked steps for the selected project. Koharu's own models
+    /// run first, then one LM Studio load covers studying, translating and
+    /// reviewing.
+    fn plan(&mut self) -> bool {
+        let Some(project) = self.project().map(Path::to_path_buf) else { return false };
+        let stages: Vec<(&str, &str)> = STAGES
+            .iter()
+            .zip(self.stages)
+            .filter(|(_, on)| *on)
+            .map(|(stage, _)| *stage)
+            .collect();
+        if stages.is_empty() && !self.study && !self.translate && !self.review_step {
+            self.status = "Marca al menos un paso.".to_owned();
+            return false;
+        }
+        let model = self.corrector.trim().to_owned();
+        let uses_llm = self.study || self.review_step || (self.translate && self.llm_translation);
+        if uses_llm && model.is_empty() {
+            self.status = "Escribe el modelo local.".to_owned();
+            return false;
+        }
+        let name = project
+            .file_stem()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.queued_projects.push(name.clone());
         let khr = self.khr.clone();
         let project_arg = project.display().to_string();
         let pages = self.pages.to_string();
         let page_args: Vec<&str> = if self.pages > 0 { vec!["--pages", &pages] } else { Vec::new() };
+        let idioma = LANGUAGES[self.idioma].0;
+        let label = |step: &str| format!("[{name}] {step}");
 
         if !stages.is_empty() {
-            // Koharu's stages need the card; release whatever LM Studio holds.
-            self.push("Liberar VRAM", &khr, &["models", "unload"], true, After::Nothing);
-            let joined = stages.join(",");
-            let mut args = vec!["run", "--project", &project_arg, "--stages", &joined];
+            self.push(&label("Liberar VRAM"), &khr, &["models", "unload"], true, After::Nothing);
+            let joined = stages.iter().map(|(key, _)| *key).collect::<Vec<_>>().join(",");
+            let mut args = vec!["run", "--project", &project_arg, "--stages", &joined, "--idioma", idioma];
             args.extend(&page_args);
-            let name = format!("Etapas: {}", stages.join(", "));
-            self.push(&name, &khr, &args, false, After::Nothing);
+            let shown = stages.iter().map(|(_, text)| *text).collect::<Vec<_>>().join(" · ");
+            self.push(&label(&shown), &khr, &args, false, After::Nothing);
         }
-        if self.correct {
-            let log = log_path(&project);
-            let log_arg = log.display().to_string();
+        if self.translate && !self.llm_translation {
+            let mut args = vec!["run", "--project", &project_arg, "--stages", "translation"];
+            args.extend(&page_args);
+            self.push(&label("5. Traducir con DeepL"), &khr, &args, false, After::Nothing);
+        }
+        if uses_llm {
+            let lms = self.lms.clone();
+            self.push(&label("Iniciar servidor de LM Studio"), &lms, &["server", "start"], true, After::Nothing);
+            self.push(&label(&format!("Cargar {model}")), &khr, &["models", "load", &model], false, After::Nothing);
+        }
+        if self.study {
+            let mut args = vec!["estudiar", "--project", &project_arg, "--model", &model];
+            if self.left_to_right {
+                args.push("--left-to-right");
+            }
+            self.push(&label("4. Estudiar la obra (ficha y términos)"), &khr, &args, false, After::Nothing);
+        }
+        if self.translate && self.llm_translation {
             let mut args = vec![
-                "post",
+                "run",
                 "--project",
                 &project_arg,
-                "--model",
+                "--stages",
+                "translation",
+                "--translator",
                 &model,
-                "--instructions",
-                INSTRUCTIONS,
-                "--log",
-                &log_arg,
+                "--without-pages",
             ];
+            args.extend(&page_args);
+            self.push(&label(&format!("5. Traducir con {model}")), &khr, &args, false, After::Nothing);
+        }
+        if self.review_step {
+            let mut args = vec!["revisar", "--project", &project_arg, "--model", &model];
             args.extend(&page_args);
             if self.left_to_right {
                 args.push("--left-to-right");
             }
-            let lms = self.lms.clone();
-            self.push("Iniciar servidor de LM Studio", &lms, &["server", "start"], true, After::Nothing);
-            self.push(&format!("Cargar {model}"), &khr, &["models", "load", &model], false, After::Nothing);
-            self.push("Corregir traducciones", &khr, &args, false, After::Nothing);
-            self.push(
-                "Liberar modelo de LM Studio",
-                &khr,
-                &["models", "unload", &model],
-                true,
-                After::ReviewCorrections { project: project.clone(), log },
-            );
+            self.push(&label("6. Revisar la traducción (propuestas)"), &khr, &args, false, After::Nothing);
         }
-        self.begin(ctx);
+        if uses_llm {
+            let after = if self.review_step {
+                After::ShowCorrections
+            } else if self.study {
+                After::ShowProposals
+            } else {
+                After::Nothing
+            };
+            self.push(&label("Liberar modelo de LM Studio"), &khr, &["models", "unload", &model], true, after);
+        }
+        self.status = format!("En cola: {}", self.queued_projects.join(", "));
+        true
     }
 
-    fn revert_last(&mut self, ctx: &egui::Context) {
+    fn learn(&mut self, ctx: &egui::Context) {
         let Some(project) = self.project().map(Path::to_path_buf) else { return };
-        let Some(log) = last_log(&project) else {
-            self.status = "No hay correcciones registradas para este proyecto.".to_owned();
-            return;
-        };
-        let sure = rfd::MessageDialog::new()
-            .set_title("Deshacer")
-            .set_description(format!(
-                "¿Deshacer la última corrección ({} cambios)?",
-                read_changes(&log).len()
-            ))
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .show();
-        if sure != rfd::MessageDialogResult::Yes || !confirm_koharu_closed() {
+        let model = self.corrector.trim().to_owned();
+        if model.is_empty() {
+            self.status = "Escribe el modelo local.".to_owned();
             return;
         }
         self.lines.clear();
-        self.push_revert(&project, &log);
+        self.log(format!("Proyecto: {}", project.display()));
+        let khr = self.khr.clone();
+        let lms = self.lms.clone();
+        let project_arg = project.display().to_string();
+        self.push("Iniciar servidor de LM Studio", &lms, &["server", "start"], true, After::Nothing);
+        self.push(&format!("Cargar {model}"), &khr, &["models", "load", &model], false, After::Nothing);
+        self.push(
+            "Aprender de mis correcciones",
+            &khr,
+            &["aprender", "--project", &project_arg, "--model", &model],
+            false,
+            After::Nothing,
+        );
+        self.push(
+            "Liberar modelo de LM Studio",
+            &khr,
+            &["models", "unload", &model],
+            true,
+            After::ShowProposals,
+        );
         self.begin(ctx);
+    }
+
+    fn work_dir(&self) -> Option<PathBuf> {
+        self.project()
+            .map(|project| Path::new(WORKS_DIR).join(log_base(project)))
+    }
+
+    fn load_glossary(&mut self) {
+        let Some(dir) = self.work_dir() else { return };
+        self.proposals = read_terms(&dir.join("propuestas.tsv"));
+        self.work_terms = read_terms(&dir.join("glosario.tsv"));
+        self.approved = self.work_terms.len();
+    }
+
+    /// Moves proposal `index` to the work's glossary or to its rejected list.
+    fn decide(&mut self, index: usize, approve: bool) {
+        let Some(dir) = self.work_dir() else { return };
+        if index >= self.proposals.len() {
+            return;
+        }
+        let term = self.proposals.remove(index);
+        let target = if approve { "glosario.tsv" } else { "rechazados.tsv" };
+        let _ = std::fs::create_dir_all(&dir);
+        let mut kept = read_terms(&dir.join(target));
+        kept.retain(|existing| existing.source.to_lowercase() != term.source.to_lowercase());
+        kept.push(term);
+        let header = if approve {
+            "# Glosario de esta obra: original<TAB>traducción<TAB>nota. Manda sobre el global.\n"
+        } else {
+            "# Términos rechazados: khr no volverá a proponerlos.\n"
+        };
+        let pending_header = "# Propuestas pendientes: original<TAB>traducción<TAB>nota\n\
+                              # Apruébalas o recházalas desde el panel.\n";
+        let written = write_terms(&dir.join(target), header, &kept)
+            .and_then(|()| write_terms(&dir.join("propuestas.tsv"), pending_header, &self.proposals));
+        if let Err(error) = written {
+            self.status = format!("No se pudo guardar el glosario: {error}");
+        }
+        if approve {
+            self.approved = kept.len();
+        }
+    }
+
+    /// Copies one of this work's terms into the global glossary, replacing an
+    /// entry with the same original there. The work keeps its copy, which
+    /// still wins inside this work.
+    fn promote(&mut self, index: usize) {
+        let Some(term) = self.work_terms.get(index).cloned() else { return };
+        let global = Path::new(GLOBAL_GLOSSARY);
+        let mut terms = read_terms(global);
+        terms.retain(|existing| existing.source.to_lowercase() != term.source.to_lowercase());
+        terms.push(term.clone());
+        // Keep the file's own explanatory header.
+        let header: String = std::fs::read_to_string(global)
+            .unwrap_or_default()
+            .lines()
+            .take_while(|line| line.trim_start().starts_with('#'))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let header = if header.is_empty() {
+            "# Glosario global: original<TAB>traducción<TAB>nota. Vale para todas las obras.\n".to_owned()
+        } else {
+            header
+        };
+        self.status = match write_terms(global, &header, &terms) {
+            Ok(()) => format!("\"{}\" → \"{}\" añadido al glosario global.", term.source, term.target),
+            Err(error) => format!("No se pudo guardar el glosario global: {error}"),
+        };
+    }
+
+    fn open_file(&mut self, path: PathBuf) {
+        if !path.exists() {
+            self.status = format!("Aún no existe: {}", path.display());
+            return;
+        }
+        if let Err(error) = Command::new("notepad").arg(&path).spawn() {
+            self.status = format!("No se pudo abrir {}: {error}", path.display());
+        }
+    }
+
+    fn glossary_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.glossary_open;
+        let mut decision: Option<(usize, bool)> = None;
+        let mut all: Option<bool> = None;
+        let mut file: Option<PathBuf> = None;
+        let mut promote: Option<usize> = None;
+        let dir = self.work_dir();
+        egui::Window::new("Glosario y ficha de la obra")
+            .open(&mut open)
+            .default_size([640.0, 420.0])
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "{} término(s) aprobados en esta obra; {} propuesta(s) pendientes.",
+                    self.approved,
+                    self.proposals.len()
+                ));
+                ui.horizontal(|ui| {
+                    if let Some(dir) = &dir {
+                        if ui.button("Abrir ficha").clicked() {
+                            file = Some(dir.join("ficha.md"));
+                        }
+                        if ui.button("Abrir glosario de la obra").clicked() {
+                            file = Some(dir.join("glosario.tsv"));
+                        }
+                    }
+                    if ui.button("Abrir glosario global").clicked() {
+                        file = Some(PathBuf::from(GLOBAL_GLOSSARY));
+                    }
+                });
+                if !self.work_terms.is_empty() {
+                    ui.separator();
+                    egui::CollapsingHeader::new(format!(
+                        "Términos de esta obra ({}): pásalos al glosario global si sirven para otras",
+                        self.work_terms.len()
+                    ))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical().id_salt("work_terms").max_height(180.0).show(ui, |ui| {
+                            egui::Grid::new("work_terms_grid").striped(true).show(ui, |ui| {
+                                for (index, term) in self.work_terms.iter().enumerate() {
+                                    ui.label(&term.source);
+                                    ui.label(&term.target);
+                                    if ui.button("→ Global").clicked() {
+                                        promote = Some(index);
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                        });
+                    });
+                }
+                ui.separator();
+                if self.proposals.is_empty() {
+                    ui.label("No hay propuestas. Usa \"Estudiar la obra\" o \"Aprender de mis correcciones\".");
+                    return;
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Aprobar todas").clicked() {
+                        all = Some(true);
+                    }
+                    if ui.button("Rechazar todas").clicked() {
+                        all = Some(false);
+                    }
+                });
+                ui.label("Puedes corregir la traducción antes de aprobarla.");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::Grid::new("proposals").striped(true).show(ui, |ui| {
+                        for (index, term) in self.proposals.iter_mut().enumerate() {
+                            ui.label(&term.source);
+                            ui.add(egui::TextEdit::singleline(&mut term.target).desired_width(180.0));
+                            ui.label(egui::RichText::new(&term.note).weak());
+                            if ui.button("Aprobar").clicked() {
+                                decision = Some((index, true));
+                            }
+                            if ui.button("Rechazar").clicked() {
+                                decision = Some((index, false));
+                            }
+                            ui.end_row();
+                        }
+                    });
+                });
+            });
+        self.glossary_open = open;
+        if let Some(index) = promote {
+            self.promote(index);
+        }
+        if let Some((index, approve)) = decision {
+            self.decide(index, approve);
+            self.work_terms = self
+                .work_dir()
+                .map(|dir| read_terms(&dir.join("glosario.tsv")))
+                .unwrap_or_default();
+        }
+        if let Some(approve) = all {
+            while !self.proposals.is_empty() {
+                self.decide(0, approve);
+            }
+        }
+        if let Some(path) = file {
+            self.open_file(path);
+        }
+    }
+
+    fn load_corrections(&mut self) {
+        let Some(dir) = self.work_dir() else { return };
+        self.corrections = read_corrections(&dir.join("correcciones.tsv"));
+        self.approved_corrections = read_lines(&dir.join("correcciones-aprobadas.tsv")).len();
+    }
+
+    /// Moves correction `index` to the approved or the rejected list and
+    /// rewrites the pending one. Approved text reaches the project only when
+    /// the user applies the list, with Koharu closed.
+    fn decide_correction(&mut self, index: usize, approve: bool) {
+        let Some(dir) = self.work_dir() else { return };
+        if index >= self.corrections.len() {
+            return;
+        }
+        let correction = self.corrections.remove(index);
+        let (file, header, line) = if approve {
+            (
+                "correcciones-aprobadas.tsv",
+                "# Correcciones aprobadas pendientes de aplicar: id\tpropuesta\n",
+                format!("{}\t{}", correction.id, correction.proposal.replace('\t', " ")),
+            )
+        } else {
+            (
+                "correcciones-rechazadas.tsv",
+                "# Correcciones rechazadas: id\ttraducción que se dejó\tpropuesta\n",
+                format!("{}\t{}\t{}", correction.id, correction.current, correction.proposal),
+            )
+        };
+        let mut kept = read_lines(&dir.join(file));
+        kept.retain(|existing| !existing.starts_with(&format!("{}\t", correction.id)));
+        kept.push(line);
+        let mut text = header.to_owned();
+        for line in &kept {
+            text.push_str(line);
+            text.push('\n');
+        }
+        let written = std::fs::write(dir.join(file), text)
+            .and_then(|()| write_corrections(&dir.join("correcciones.tsv"), &self.corrections));
+        if let Err(error) = written {
+            self.status = format!("No se pudo guardar la corrección: {error}");
+        }
+        if approve {
+            self.approved_corrections = kept.len();
+        }
+    }
+
+    /// Adds one term to this work's glossary, replacing the same original.
+    fn add_term(&mut self, source: String, target: String) {
+        let Some(dir) = self.work_dir() else { return };
+        let (source, target) = (source.trim().to_owned(), target.trim().to_owned());
+        if source.is_empty() || target.is_empty() {
+            return;
+        }
+        let _ = std::fs::create_dir_all(&dir);
+        let mut terms = read_terms(&dir.join("glosario.tsv"));
+        terms.retain(|term| term.source.to_lowercase() != source.to_lowercase());
+        terms.push(Term {
+            source,
+            target,
+            note: "Aprobado desde una corrección.".to_owned(),
+        });
+        let header = "# Glosario de esta obra: original<TAB>traducción<TAB>nota. Manda sobre el global.\n";
+        match write_terms(&dir.join("glosario.tsv"), header, &terms) {
+            Ok(()) => self.status = format!("{} término(s) en el glosario de la obra.", terms.len()),
+            Err(error) => self.status = format!("No se pudo guardar el glosario: {error}"),
+        }
+    }
+
+    fn apply_corrections(&mut self, ctx: &egui::Context) {
+        let Some(project) = self.project().map(Path::to_path_buf) else { return };
+        if self.current.is_some() || !confirm_koharu_closed() {
+            return;
+        }
+        self.lines.clear();
+        let khr = self.khr.clone();
+        let project_arg = project.display().to_string();
+        self.push(
+            "Aplicar correcciones aprobadas",
+            &khr,
+            &["aplicar", "--project", &project_arg],
+            false,
+            After::Nothing,
+        );
+        self.approved_corrections = 0;
+        self.begin(ctx);
+    }
+
+    fn corrections_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.corrections_open;
+        let mut decision: Option<(usize, bool)> = None;
+        let mut to_glossary: Option<usize> = None;
+        let mut save_term = false;
+        let mut cancel_term = false;
+        let mut apply = false;
+        let busy = self.current.is_some();
+        egui::Window::new("Correcciones propuestas")
+            .open(&mut open)
+            .default_size([820.0, 480.0])
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "{} pendiente(s); {} aprobada(s) sin aplicar.",
+                    self.corrections.len(),
+                    self.approved_corrections
+                ));
+                ui.horizontal(|ui| {
+                    let label = "Aplicar las aprobadas al proyecto";
+                    if ui
+                        .add_enabled(!busy && self.approved_corrections > 0, egui::Button::new(label))
+                        .clicked()
+                    {
+                        apply = true;
+                    }
+                    ui.label(egui::RichText::new("(con Koharu cerrado)").weak());
+                });
+                if let Some((source, target)) = &mut self.new_term {
+                    ui.separator();
+                    ui.label("Nuevo término del glosario: recorta el original a la palabra o frase que se repite.");
+                    ui.horizontal(|ui| {
+                        ui.label("Original:");
+                        ui.add(egui::TextEdit::singleline(source).desired_width(240.0));
+                        ui.label("Traducción:");
+                        ui.add(egui::TextEdit::singleline(target).desired_width(240.0));
+                        if ui.button("Guardar término").clicked() {
+                            save_term = true;
+                        }
+                        if ui.button("Cancelar").clicked() {
+                            cancel_term = true;
+                        }
+                    });
+                }
+                ui.separator();
+                if self.corrections.is_empty() {
+                    ui.label("No hay correcciones pendientes. Se generan con el paso 6 (Revisar la traducción).");
+                    return;
+                }
+                ui.label("Puedes editar la propuesta antes de aprobarla.");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::Grid::new("corrections").striped(true).num_columns(2).show(ui, |ui| {
+                        for (index, correction) in self.corrections.iter_mut().enumerate() {
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new(format!("Pág. {}", correction.page)).strong());
+                                if ui.button("Aprobar").clicked() {
+                                    decision = Some((index, true));
+                                }
+                                if ui.button("Rechazar").clicked() {
+                                    decision = Some((index, false));
+                                }
+                                if ui.button("Aprobar + glosario").clicked() {
+                                    to_glossary = Some(index);
+                                }
+                            });
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new(&correction.original).weak());
+                                ui.label(
+                                    egui::RichText::new(format!("- {}", correction.current))
+                                        .color(egui::Color32::from_rgb(200, 140, 110)),
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("+").color(egui::Color32::from_rgb(110, 200, 120)),
+                                    );
+                                    ui.add(
+                                        egui::TextEdit::multiline(&mut correction.proposal)
+                                            .desired_rows(1)
+                                            .desired_width(620.0),
+                                    );
+                                });
+                                ui.label(egui::RichText::new(&correction.reason).italics().weak());
+                            });
+                            ui.end_row();
+                        }
+                    });
+                });
+            });
+        self.corrections_open = open;
+        if let Some((index, approve)) = decision {
+            self.decide_correction(index, approve);
+        }
+        if let Some(index) = to_glossary
+            && let Some(correction) = self.corrections.get(index).cloned()
+        {
+            self.new_term = Some((correction.original.clone(), correction.proposal.clone()));
+            self.decide_correction(index, true);
+        }
+        if save_term && let Some((source, target)) = self.new_term.take() {
+            self.add_term(source, target);
+        }
+        if cancel_term {
+            self.new_term = None;
+        }
+        if apply {
+            self.apply_corrections(ctx);
+        }
+    }
+
+    /// What the selected project needs next, from what its work folder holds.
+    fn next_step(&self) -> String {
+        let name = self
+            .project()
+            .and_then(Path::file_stem)
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        format!("[{name}] {}", self.next_step_for_project())
+    }
+
+    fn next_step_for_project(&self) -> String {
+        let Some(dir) = self.work_dir() else {
+            return "Elige un proyecto (se crea en Koharu importando las imágenes).".to_owned();
+        };
+        if !dir.join("ficha.md").exists() {
+            return "Siguiente: pasos 1-6 con el idioma original elegido (o añádelo a la cola).".to_owned();
+        }
+        let proposals = read_terms(&dir.join("propuestas.tsv")).len();
+        if proposals > 0 {
+            return format!(
+                "Siguiente: aprueba o rechaza {proposals} término(s) en \"Glosario y ficha\"; \
+                 si cambias alguno, vuelve a traducir (paso 5)."
+            );
+        }
+        let pending = read_corrections(&dir.join("correcciones.tsv")).len();
+        if pending > 0 {
+            return format!("Siguiente: revisa {pending} corrección(es) en \"Correcciones\".");
+        }
+        if !read_lines(&dir.join("correcciones-aprobadas.tsv")).is_empty() {
+            return "Siguiente: \"Aplicar las aprobadas\" en la ventana Correcciones.".to_owned();
+        }
+        "Siguiente: abre el proyecto en Koharu, revisa y exporta. Si corriges a mano, \
+         usa \"Aprender de mis correcciones\" para alimentar el glosario."
+            .to_owned()
     }
 
     fn stop(&mut self) {
@@ -442,14 +956,17 @@ impl eframe::App for Panel {
                     .and_then(Path::file_name)
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "(ninguno)".to_owned());
-                ui.add_enabled_ui(!busy, |ui| {
+                let mut changed = false;
+                ui.add_enabled_ui(true, |ui| {
                     egui::ComboBox::from_id_salt("project")
                         .width(440.0)
                         .selected_text(shown)
                         .show_ui(ui, |ui| {
                             for (index, path) in self.projects.iter().enumerate() {
                                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                                ui.selectable_value(&mut self.selected, Some(index), name);
+                                if ui.selectable_value(&mut self.selected, Some(index), name).clicked() {
+                                    changed = true;
+                                }
                             }
                         });
                     if ui.button("Examinar...").clicked()
@@ -466,36 +983,59 @@ impl eframe::App for Panel {
                             }
                         };
                         self.selected = Some(index);
+                        changed = true;
                     }
                     if ui.button("Recargar").clicked() {
                         self.reload_projects();
                     }
                 });
+                if changed {
+                    self.project_changed();
+                }
             });
             ui.add_space(6.0);
 
-            ui.add_enabled_ui(!busy, |ui| {
+            ui.add_enabled_ui(true, |ui| {
                 ui.columns(2, |cols| {
-                    cols[0].strong("Etapas (en orden)");
+                    cols[0].strong("Pasos (en orden)");
                     for ((_, label), on) in STAGES.iter().zip(self.stages.iter_mut()) {
                         cols[0].checkbox(on, *label);
                     }
-                    cols[0].checkbox(&mut self.correct, "5. Corregir con modelo local (LM Studio)");
+                    cols[0].checkbox(&mut self.study, "4. Estudiar la obra (ficha y términos)");
+                    cols[0].checkbox(&mut self.translate, "5. Traducir");
+                    cols[0].checkbox(
+                        &mut self.review_step,
+                        "6. Revisar la traducción (propone correcciones)",
+                    );
 
                     cols[1].strong("Opciones");
                     cols[1].horizontal(|ui| {
-                        ui.label("Corrector:");
+                        ui.label("Traducir con:");
+                        ui.radio_value(&mut self.llm_translation, true, "Modelo local");
+                        ui.radio_value(&mut self.llm_translation, false, "DeepL");
+                    });
+                    cols[1].horizontal(|ui| {
+                        ui.label("Modelo local:");
                         ui.add(egui::TextEdit::singleline(&mut self.corrector).desired_width(240.0));
                     });
                     cols[1].horizontal(|ui| {
                         ui.label("Páginas (0 = todas):");
                         ui.add(egui::DragValue::new(&mut self.pages).range(0..=9999));
                     });
+                    cols[1].horizontal(|ui| {
+                        ui.label("Idioma original:");
+                        egui::ComboBox::from_id_salt("idioma")
+                            .selected_text(LANGUAGES[self.idioma].1)
+                            .show_ui(ui, |ui| {
+                                for (index, (_, name)) in LANGUAGES.iter().enumerate() {
+                                    ui.selectable_value(&mut self.idioma, index, *name);
+                                }
+                            });
+                    });
                     cols[1].checkbox(
                         &mut self.left_to_right,
                         "Leer de izquierda a derecha (desmarcado = manga)",
                     );
-                    cols[1].checkbox(&mut self.review, "Preguntar si conservo las correcciones");
                 });
             });
             ui.add_space(6.0);
@@ -506,18 +1046,31 @@ impl eframe::App for Panel {
                 if ui.add_enabled(can_run, run).clicked() {
                     self.run(&ctx);
                 }
+                let add = egui::Button::new("+ Añadir a la cola");
+                if ui.add_enabled(self.project().is_some(), add).clicked() {
+                    self.enqueue(&ctx);
+                }
                 if ui.add_enabled(busy, egui::Button::new("■ Detener")).clicked() {
                     self.stop();
-                }
-                let revert = egui::Button::new("Deshacer última corrección");
-                if ui.add_enabled(can_run, revert).clicked() {
-                    self.revert_last(&ctx);
                 }
                 if ui.button("Abrir Koharu").clicked() {
                     self.status = match Command::new(&self.koharu).spawn() {
                         Ok(_) => "Koharu abierto: carga el proyecto desde su menú.".to_owned(),
                         Err(error) => format!("No se pudo abrir Koharu: {error}"),
                     };
+                }
+                if ui.add_enabled(can_run, egui::Button::new("Aprender de mis correcciones")).clicked()
+                    && confirm_koharu_closed()
+                {
+                    self.learn(&ctx);
+                }
+                if ui.add_enabled(self.project().is_some(), egui::Button::new("Glosario y ficha")).clicked() {
+                    self.load_glossary();
+                    self.glossary_open = true;
+                }
+                if ui.add_enabled(self.project().is_some(), egui::Button::new("Correcciones")).clicked() {
+                    self.load_corrections();
+                    self.corrections_open = true;
                 }
                 if ui.add_enabled(!busy, egui::Button::new("Liberar VRAM")).clicked() {
                     self.lines.clear();
@@ -526,8 +1079,17 @@ impl eframe::App for Panel {
                     self.begin(&ctx);
                 }
             });
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(self.next_step()).color(egui::Color32::from_rgb(120, 170, 230)));
             ui.add_space(6.0);
         });
+
+        if self.glossary_open {
+            self.glossary_window(&ctx);
+        }
+        if self.corrections_open {
+            self.corrections_window(&ctx);
+        }
 
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -592,12 +1154,77 @@ fn modified(path: &Path) -> SystemTime {
         .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
-fn read_changes(log: &Path) -> Vec<serde_json::Value> {
-    std::fs::read_to_string(log)
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|record| record["changes"].as_array().cloned())
+fn read_terms(path: &Path) -> Vec<Term> {
+    std::fs::read_to_string(path)
         .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .filter_map(|line| {
+            let mut fields = line.split('\t').map(str::trim);
+            let source = fields.next()?.to_owned();
+            let target = fields.next()?.to_owned();
+            let note = fields.next().unwrap_or_default().to_owned();
+            (!source.is_empty() && !target.is_empty()).then_some(Term { source, target, note })
+        })
+        .collect()
+}
+
+fn write_terms(path: &Path, header: &str, terms: &[Term]) -> std::io::Result<()> {
+    let mut text = header.to_owned();
+    for term in terms {
+        let target = term.target.replace('\t', " ");
+        if term.note.is_empty() {
+            text.push_str(&format!("{}\t{target}\n", term.source));
+        } else {
+            text.push_str(&format!("{}\t{target}\t{}\n", term.source, term.note));
+        }
+    }
+    std::fs::write(path, text)
+}
+
+fn read_lines(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#') && !line.trim().is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn read_corrections(path: &Path) -> Vec<Correction> {
+    read_lines(path)
+        .into_iter()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            Some(Correction {
+                id: fields.next()?.to_owned(),
+                page: fields.next()?.to_owned(),
+                original: fields.next()?.to_owned(),
+                current: fields.next()?.to_owned(),
+                proposal: fields.next()?.to_owned(),
+                reason: fields.next().unwrap_or_default().to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn write_corrections(path: &Path, corrections: &[Correction]) -> std::io::Result<()> {
+    let mut text = String::from(
+        "# Correcciones propuestas: id\tpágina\toriginal\tactual\tpropuesta\tmotivo\n\
+         # Apruébalas o recházalas desde el panel.\n",
+    );
+    for c in corrections {
+        text.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            c.id,
+            c.page,
+            c.original,
+            c.current,
+            c.proposal.replace(['\t', '\n'], " "),
+            c.reason
+        ));
+    }
+    std::fs::write(path, text)
 }
 
 fn log_base(project: &Path) -> String {
@@ -610,30 +1237,24 @@ fn log_base(project: &Path) -> String {
         .collect()
 }
 
-fn log_path(project: &Path) -> PathBuf {
-    let _ = std::fs::create_dir_all(LOGS_DIR);
-    let stamp = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or_default();
-    Path::new(LOGS_DIR).join(format!("{}__{stamp}.json", log_base(project)))
-}
-
-fn last_log(project: &Path) -> Option<PathBuf> {
-    let prefix = format!("{}__", log_base(project));
-    std::fs::read_dir(LOGS_DIR)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension().is_some_and(|ext| ext == "json")
-                && path
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .and_then(|stem| stem.strip_prefix(&prefix))
-                    .is_some_and(|rest| rest.chars().all(|c| c.is_ascii_digit()))
-        })
-        .max_by_key(|path| modified(path))
+/// The bundled fonts have no kana, hangul or hanzi, so originals showed as
+/// boxes. Borrow Windows' own fonts as fallbacks, Japanese first.
+fn install_cjk_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    for (name, file) in [
+        ("yu-gothic", r"C:\Windows\Fonts\YuGothM.ttc"),
+        ("malgun", r"C:\Windows\Fonts\malgun.ttf"),
+        ("yahei", r"C:\Windows\Fonts\msyh.ttc"),
+    ] {
+        let Ok(bytes) = std::fs::read(file) else { continue };
+        fonts
+            .font_data
+            .insert(name.to_owned(), Arc::new(egui::FontData::from_owned(bytes)));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            fonts.families.entry(family).or_default().push(name.to_owned());
+        }
+    }
+    ctx.set_fonts(fonts);
 }
 
 fn main() -> eframe::Result {
@@ -647,6 +1268,9 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Koharu - Panel",
         options,
-        Box::new(|_| Ok(Box::new(Panel::new()))),
+        Box::new(|cc| {
+            install_cjk_fonts(&cc.egui_ctx);
+            Ok(Box::new(Panel::new()))
+        }),
     )
 }
