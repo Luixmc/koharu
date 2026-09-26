@@ -17,6 +17,7 @@ use imageproc::{
     geometry::{approximate_polygon_dp, arc_length, contour_area},
     morphology::{close, dilate},
 };
+use koharu_ml::comic_text_bubble_detector::{RTDetrV2Detection, TextBlock as BubbleTextBlock};
 use koharu_ml::koharu_layout_rfdetr_seg_2xl::{
     KoharuLayoutDetection, KoharuLayoutDetections, KoharuLayoutMask, KoharuLayoutRFDetrSeg2XL,
     KoharuLayoutThresholds,
@@ -48,6 +49,10 @@ const COLOR_CLUSTER_COUNT: usize = 4;
 const MIN_EXTREME_COLOR_PIXELS: u32 = 4;
 const MIN_MEASURED_STROKE_WIDTH: u8 = 2;
 const DIALOGUE_MASK_CONTAINMENT_THRESHOLD: f32 = 0.9;
+/// Shrinks an added bubble's box on each side, as a percentage of its size.
+const BUBBLE_INSET_PERCENT: i32 = 6;
+/// The comic-text-and-bubble-detector CLI default.
+const TEXT_DETECTOR_CONFIDENCE: f32 = 0.3;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, Type)]
 #[serde(default)]
@@ -55,6 +60,13 @@ pub struct KoharuLayoutRFDetrSeg2XLConfig {
     pub text_threshold: Option<f32>,
     pub bubble_threshold: Option<f32>,
     pub panel_threshold: Option<f32>,
+    /// Take the text regions from ogkalu's comic-text-and-bubble-detector
+    /// instead: the layout model boxes only one or two columns of a vertical
+    /// Japanese balloon and misses balloons on dark backgrounds, so OCR reads
+    /// half sentences. On Sakurami page 9 it found all 28 balloons whole in
+    /// Japanese, Korean, Chinese and English. Bubbles, panels and onomatopoeia
+    /// still come from the layout model.
+    pub comic_text_detector: Option<bool>,
 }
 
 pub(super) struct Processor {
@@ -137,11 +149,17 @@ impl StageProcessor for Processor {
 struct Model {
     network: Arc<Mutex<KoharuLayoutRFDetrSeg2XL>>,
     thresholds: KoharuLayoutThresholds,
+    text_detector: Option<Arc<Mutex<RTDetrV2Detection>>>,
 }
 
 impl Model {
     async fn load(device: koharu_ml::Device, config: &DetectionModel) -> Result<Self> {
         let DetectionModel::KoharuLayoutRFDetrSeg2XL(config) = config;
+        let text_detector = if config.comic_text_detector.unwrap_or(false) {
+            Some(Arc::new(Mutex::new(RTDetrV2Detection::load(device.clone()).await?)))
+        } else {
+            None
+        };
         let network = KoharuLayoutRFDetrSeg2XL::load(device).await?;
         let mut thresholds = network.recommended_thresholds();
         thresholds.text = config.text_threshold.unwrap_or(thresholds.text);
@@ -150,6 +168,7 @@ impl Model {
         Ok(Self {
             network: Arc::new(Mutex::new(network)),
             thresholds,
+            text_detector,
         })
     }
 
@@ -167,14 +186,237 @@ impl Model {
     async fn detect(&self, image: Arc<DynamicImage>) -> Result<KoharuLayoutDetections> {
         let network = self.network.clone();
         let thresholds = self.thresholds;
+        let text_detector = self.text_detector.clone();
         tokio_rayon::spawn(move || {
-            let network = network
+            let mut output = network
                 .lock()
-                .map_err(|_| anyhow!("layout model lock is poisoned"))?;
-            network.inference_with_thresholds(&image, thresholds)
+                .map_err(|_| anyhow!("layout model lock is poisoned"))?
+                .inference_with_thresholds(&image, thresholds)?;
+            if let Some(text_detector) = text_detector {
+                let blocks = text_detector
+                    .lock()
+                    .map_err(|_| anyhow!("text detector lock is poisoned"))?
+                    .inference(&image, TEXT_DETECTOR_CONFIDENCE)?;
+                replace_text_regions(&mut output, &image, &blocks);
+            }
+            Ok(output)
         })
         .await
     }
+}
+
+/// Swaps the layout model's text detections for whole-balloon blocks.
+///
+/// Each mask is the block's ink (dark strokes on light paper, or light on
+/// dark), grown a little, so inpainting erases letters and not a rectangle of
+/// art. A balloon the layout model missed is added from the block's own
+/// bubble box as a rounded shape, so the translation is laid out across the
+/// balloon instead of squeezed into one column's box. A block lying mostly
+/// inside an onomatopoeia and much thicker than the dialogue is left out, so
+/// drawn sound effects stay in the art; thickness matters because the layout
+/// model also calls floating narration an onomatopoeia.
+fn replace_text_regions(
+    output: &mut KoharuLayoutDetections,
+    image: &DynamicImage,
+    blocks: &[BubbleTextBlock],
+) {
+    let label_of = |output: &KoharuLayoutDetections, label: &str| {
+        output
+            .detections
+            .iter()
+            .find(|detection| detection.label == label)
+            .map_or(0, |detection| detection.label_id)
+    };
+    let text_label = label_of(output, "text");
+    let bubble_label = label_of(output, "bubble");
+    let effects: Vec<[f32; 4]> = output
+        .detections
+        .iter()
+        .filter(|detection| detection.label == "onomatopoeia")
+        .map(|detection| detection.bbox)
+        .collect();
+    output.detections.retain(|detection| detection.label != "text");
+    let thickness = |xyxy: &[i32; 4]| (xyxy[2] - xyxy[0]).min(xyxy[3] - xyxy[1]);
+    let mut thicknesses: Vec<i32> = blocks.iter().map(|block| thickness(&block.xyxy)).collect();
+    thicknesses.sort_unstable();
+    let dialogue = thicknesses.get(thicknesses.len() / 2).copied().unwrap_or(0);
+    let (width, height) = (output.image_width, output.image_height);
+    let luma = image.to_luma8();
+    let mut added: Vec<[f32; 4]> = Vec::new();
+    let clamp_box = |xyxy: &[i32; 4]| {
+        (
+            xyxy[0].clamp(0, width as i32) as u32,
+            xyxy[1].clamp(0, height as i32) as u32,
+            xyxy[2].clamp(0, width as i32) as u32,
+            xyxy[3].clamp(0, height as i32) as u32,
+        )
+    };
+    for block in blocks {
+        let (x0, y0, x1, y1) = clamp_box(&block.xyxy);
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+        let bbox = [x0 as f32, y0 as f32, x1 as f32, y1 as f32];
+        let own = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]);
+        let in_effect = effects.iter().any(|effect| {
+            let ix = (bbox[2].min(effect[2]) - bbox[0].max(effect[0])).max(0.0);
+            let iy = (bbox[3].min(effect[3]) - bbox[1].max(effect[1])).max(0.0);
+            ix * iy > own * 0.6
+        });
+        if in_effect && thickness(&block.xyxy) * 2 > dialogue * 3 {
+            continue;
+        }
+        let (block_width, block_height) = (x1 - x0, y1 - y0);
+        let text_mask = KoharuLayoutMask {
+            x: x0,
+            y: y0,
+            width: block_width,
+            height: block_height,
+            pixels: ink_mask(&luma, x0, y0, block_width, block_height),
+        };
+        // Same test as linking text to its balloon later: a layout-model
+        // bubble whose outline cuts through the text (spiky or joined
+        // balloons) would be refused there, leaving the text boxed in its
+        // columns, so such a bubble does not count as covering it.
+        let covered = output.detections.iter().any(|detection| {
+            detection.label == "bubble" && ink_inside(&detection.mask, &text_mask) >= 0.9
+        });
+        output.detections.push(KoharuLayoutDetection {
+            label_id: text_label,
+            label: "text".to_owned(),
+            score: 0.9,
+            bbox,
+            area: block_width * block_height,
+            mask: text_mask,
+        });
+
+        let Some(bubble) = block.bubble_xyxy else {
+            continue;
+        };
+        // Keep the laid-out text off the balloon's outline.
+        let inset_x = (bubble[2] - bubble[0]) * BUBBLE_INSET_PERCENT / 100;
+        let inset_y = (bubble[3] - bubble[1]) * BUBBLE_INSET_PERCENT / 100;
+        let (bx0, by0, bx1, by1) = clamp_box(&[
+            bubble[0] + inset_x,
+            bubble[1] + inset_y,
+            bubble[2] - inset_x,
+            bubble[3] - inset_y,
+        ]);
+        if covered || bx1 <= bx0 || by1 <= by0 {
+            continue;
+        }
+        // Two texts of a joined balloon come with the same bubble box; one
+        // shared region lets the renderer split it between them instead of
+        // stacking both over the whole balloon.
+        let new_box = [bx0 as f32, by0 as f32, bx1 as f32, by1 as f32];
+        if added.iter().any(|other| box_overlap(other, &new_box) > 0.6) {
+            continue;
+        }
+        added.push(new_box);
+        let (bubble_width, bubble_height) = (bx1 - bx0, by1 - by0);
+        let pixels = rounded_mask(bubble_width, bubble_height);
+        let area = pixels.iter().filter(|value| **value != 0).count() as u32;
+        output.detections.push(KoharuLayoutDetection {
+            label_id: bubble_label,
+            label: "bubble".to_owned(),
+            score: 0.9,
+            bbox: [bx0 as f32, by0 as f32, bx1 as f32, by1 as f32],
+            area,
+            mask: KoharuLayoutMask {
+                x: bx0,
+                y: by0,
+                width: bubble_width,
+                height: bubble_height,
+                pixels,
+            },
+        });
+    }
+}
+
+/// The strokes inside a text box, grown by a few pixels. The paper is
+/// whichever side of mid-grey most of the box is on; the ink is the other.
+/// A box with almost no ink falls back to the whole box.
+fn ink_mask(luma: &image::GrayImage, x0: u32, y0: u32, width: u32, height: u32) -> Vec<u8> {
+    const GROW: i32 = 4;
+    let at = |x: u32, y: u32| luma.get_pixel(x0 + x, y0 + y)[0];
+    let light = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .filter(|&(x, y)| at(x, y) >= 128)
+        .count();
+    let paper_is_light = light * 2 >= (width * height) as usize;
+    let mut ink = vec![false; (width * height) as usize];
+    let mut count = 0;
+    for y in 0..height {
+        for x in 0..width {
+            let value = at(x, y);
+            let is_ink = if paper_is_light { value < 128 } else { value > 160 };
+            if is_ink {
+                ink[(y * width + x) as usize] = true;
+                count += 1;
+            }
+        }
+    }
+    if count * 100 < (width * height) as usize {
+        return vec![255; (width * height) as usize];
+    }
+    let mut grown = vec![0u8; ink.len()];
+    for y in 0..height as i32 {
+        for x in 0..width as i32 {
+            if !ink[(y as u32 * width + x as u32) as usize] {
+                continue;
+            }
+            for dy in -GROW..=GROW {
+                for dx in -GROW..=GROW {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 {
+                        grown[(ny as u32 * width + nx as u32) as usize] = 255;
+                    }
+                }
+            }
+        }
+    }
+    grown
+}
+
+/// Intersection over the smaller of two boxes.
+fn box_overlap(a: &[f32; 4], b: &[f32; 4]) -> f32 {
+    let ix = (a[2].min(b[2]) - a[0].max(b[0])).max(0.0);
+    let iy = (a[3].min(b[3]) - a[1].max(b[1])).max(0.0);
+    let smaller = ((a[2] - a[0]) * (a[3] - a[1])).min((b[2] - b[0]) * (b[3] - b[1]));
+    if smaller <= 0.0 { 0.0 } else { ix * iy / smaller }
+}
+
+/// Share of a text mask's pixels that fall inside a bubble mask.
+fn ink_inside(bubble: &KoharuLayoutMask, text: &KoharuLayoutMask) -> f32 {
+    let mut total = 0u32;
+    let mut inside = 0u32;
+    for y in 0..text.height {
+        for x in 0..text.width {
+            if text.pixels[(y * text.width + x) as usize] == 0 {
+                continue;
+            }
+            total += 1;
+            if bubble.contains(text.x + x, text.y + y) {
+                inside += 1;
+            }
+        }
+    }
+    if total == 0 { 0.0 } else { inside as f32 / total as f32 }
+}
+
+/// A rounded rectangle (superellipse) filling a bubble box: close to a
+/// balloon's outline while still covering the corners text reaches into.
+fn rounded_mask(width: u32, height: u32) -> Vec<u8> {
+    let (half_width, half_height) = (width as f32 / 2.0, height as f32 / 2.0);
+    let mut pixels = Vec::with_capacity((width * height) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let dx = ((x as f32 + 0.5) - half_width).abs() / half_width;
+            let dy = ((y as f32 + 0.5) - half_height).abs() / half_height;
+            pixels.push(if dx.powi(4) + dy.powi(4) <= 1.0 { 255 } else { 0 });
+        }
+    }
+    pixels
 }
 
 struct DetectedRegion<'a> {
