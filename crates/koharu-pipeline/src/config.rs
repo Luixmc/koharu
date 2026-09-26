@@ -178,6 +178,19 @@ pub struct TranslationConfig {
     #[specta(type = String)]
     pub target_language: Language,
     pub instructions: Option<String>,
+    /// Notes describing the work being translated. Filled in by the caller
+    /// for one project and never persisted with the shared configuration.
+    #[serde(skip)]
+    pub work_notes: Option<String>,
+    /// Fixed renderings; only the terms present on a page reach the model.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub glossary: koharu_translator::Glossary,
+    /// What each page shows and who speaks, keyed by page id. Filled in by the
+    /// caller from the work's page study.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub page_notes: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for TranslationConfig {
@@ -187,6 +200,9 @@ impl Default for TranslationConfig {
             generation: GenerationConfig::default(),
             target_language: Language::English,
             instructions: None,
+            work_notes: None,
+            glossary: koharu_translator::Glossary::default(),
+            page_notes: std::collections::BTreeMap::new(),
         }
     }
 }

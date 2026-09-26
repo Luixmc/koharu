@@ -2,6 +2,7 @@
 
 mod backend;
 mod error;
+pub mod glossary;
 mod language;
 mod local;
 mod model;
@@ -17,6 +18,7 @@ use error::{Error, Result};
 use local::LocalTranslator;
 
 pub use backend::{TranslationContext, TranslationRequest};
+pub use glossary::{Glossary, GlossaryEntry};
 pub use language::Language;
 pub use model::{GenerationConfig, Model, ModelSelection, Quantization};
 pub(crate) use model::{ModelGeneration, QuantizationDefinition, display_name};

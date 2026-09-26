@@ -54,7 +54,25 @@ impl StageProcessor for Processor {
             targets.iter().map(|(_, source)| source.clone()),
             self.config.target_language,
         );
-        if let Some(instructions) = self.config.instructions.as_deref() {
+        let sources: Vec<&str> = targets.iter().map(|(_, source)| source.as_str()).collect();
+        let work = koharu_translator::glossary::instructions_block(
+            self.config.work_notes.as_deref(),
+            &self.config.glossary,
+            &sources,
+        );
+        let page = koharu_translator::glossary::page_block(
+            self.config
+                .page_notes
+                .get(&input.page.to_string())
+                .map(String::as_str),
+        );
+        let instructions = [self.config.instructions.as_deref().unwrap_or_default(), &work, &page]
+            .into_iter()
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if !instructions.is_empty() {
             request = request.with_instructions(instructions);
         }
         if Translator::supports_vision(&self.config.model, &self.config.generation)
