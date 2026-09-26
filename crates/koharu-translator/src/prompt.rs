@@ -28,17 +28,34 @@ pub(crate) fn translations(
     text: &str,
     source_segments: &[String],
 ) -> anyhow::Result<Vec<String>> {
-    let output = serde_json::from_str::<TranslationOutput>(text).with_context(|| {
-        format!(
-            "{provider} returned invalid translation JSON for {} segments; response was: {}",
-            source_segments.len(),
-            snippet(text),
-        )
-    })?;
+    let segments = match serde_json::from_str::<TranslationOutput>(text) {
+        Ok(output) => output.translations,
+        Err(error) => {
+            // A model stuck repeating one character runs into max_tokens and
+            // the reply stops mid-string. The segments before the loop are
+            // still whole; keep them and leave the rest as missing so they are
+            // asked for again.
+            let salvaged = salvage(text);
+            if salvaged.is_empty() {
+                return Err(anyhow::Error::new(error).context(format!(
+                    "{provider} returned invalid translation JSON for {} segments; response was: {}",
+                    source_segments.len(),
+                    snippet(text),
+                )));
+            }
+            tracing::warn!(
+                provider,
+                salvaged = salvaged.len(),
+                expected = source_segments.len(),
+                "translation JSON was broken ({error}); keeping the segments that came back whole"
+            );
+            salvaged
+        }
+    };
     let mut translations = source_segments.to_vec();
     let mut translated = vec![false; source_segments.len()];
 
-    for translation in output.translations {
+    for translation in segments {
         if translation.id < translations.len() && !translated[translation.id] {
             translations[translation.id] = translation.text;
             translated[translation.id] = true;
@@ -46,6 +63,36 @@ pub(crate) fn translations(
     }
 
     Ok(translations)
+}
+
+/// The whole `{"id", "text"}` objects at the start of a `translations` array
+/// that breaks off or goes wrong further on.
+fn salvage(text: &str) -> Vec<TranslationOutputSegment> {
+    let Some(array) = text
+        .find("\"translations\"")
+        .and_then(|key| text[key..].find('[').map(|open| key + open + 1))
+    else {
+        return Vec::new();
+    };
+    let mut rest = &text[array..];
+    let mut segments = Vec::new();
+    loop {
+        rest = rest.trim_start_matches(|c: char| c.is_whitespace() || c == ',');
+        if !rest.starts_with('{') {
+            break;
+        }
+        let mut stream =
+            serde_json::Deserializer::from_str(rest).into_iter::<TranslationOutputSegment>();
+        match stream.next() {
+            Some(Ok(segment)) => {
+                let end = stream.byte_offset();
+                segments.push(segment);
+                rest = &rest[end..];
+            }
+            _ => break,
+        }
+    }
+    segments
 }
 
 /// Keeps a model response readable in a log line without truncating so hard
@@ -255,16 +302,39 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrapped_and_malformed_json() {
+    fn rejects_json_with_no_whole_segment() {
         let source = ["one".to_owned(), "two".to_owned()];
         for response in [
-            "```json\n{\"translations\":[{\"id\":0,\"text\":\"hello\"},{\"id\":1,\"text\":\"world\"}]}\n```",
             r#"{translations: [{id: 0, text: 'hello'}, {id: 1, text: 'world'},],}"#,
-            r#"Here is the result: {"translations": [{"id": 0, "text": "hello"}, {"id": 1, "text": "world"},]}"#,
-            "{\"translations\":[{\"id\":0,\"text\":\"hello\"},{\"id\":1,\"text\":\"world\"",
+            "{\"translations\":[{\"id\":0,\"text\":\"hel",
+            "I cannot translate this.",
         ] {
             assert!(
                 translations("test", response, &source).is_err(),
+                "{response}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_the_whole_segments_of_broken_json() {
+        let source = ["one".to_owned(), "two".to_owned(), "three".to_owned()];
+        let looping = format!(
+            "{{\"translations\":[{{\"id\":0,\"text\":\"hola\"}},{{\"id\":1,\"text\":\"{}",
+            "\u{ff5e}".repeat(4000)
+        );
+        assert_eq!(
+            translations("test", &looping, &source).unwrap(),
+            ["hola", "two", "three"]
+        );
+
+        for response in [
+            "```json\n{\"translations\":[{\"id\":0,\"text\":\"hola\"},{\"id\":1,\"text\":\"mundo\"}]}\n```",
+            r#"Here is the result: {"translations": [{"id": 0, "text": "hola"}, {"id": 1, "text": "mundo"},]}"#,
+        ] {
+            assert_eq!(
+                translations("test", response, &source).unwrap(),
+                ["hola", "mundo", "three"],
                 "{response}"
             );
         }

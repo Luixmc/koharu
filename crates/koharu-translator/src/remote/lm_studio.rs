@@ -65,6 +65,10 @@ pub(super) async fn translate(
         temperature: generation.temperature,
         top_p: generation.top_p,
         max_tokens: generation.max_tokens,
+        // LM Studio's own sampling option, outside the OpenAI set; without it
+        // the configured penalty never reaches the model and nothing holds
+        // back a repetition loop.
+        repeat_penalty: generation.repeat_penalty,
         frequency_penalty: generation.frequency_penalty,
         presence_penalty: generation.presence_penalty,
         reasoning_effort: generation
@@ -146,6 +150,8 @@ struct ChatRequest<'a> {
     top_p: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repeat_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     frequency_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -316,6 +322,7 @@ mod tests {
             temperature: None,
             top_p: None,
             max_tokens: Some(1024),
+            repeat_penalty: Some(1.1),
             frequency_penalty: None,
             presence_penalty: None,
             reasoning_effort: Some("none"),
@@ -331,6 +338,7 @@ mod tests {
         let value = serde_json::to_value(body).unwrap();
 
         assert_eq!(value["max_tokens"], 1024);
+        assert!((value["repeat_penalty"].as_f64().unwrap() - 1.1).abs() < 1e-6);
         assert_eq!(value["reasoning_effort"], "none");
         assert_eq!(value["response_format"]["type"], "json_schema");
         assert_eq!(value["response_format"]["json_schema"]["strict"], true);

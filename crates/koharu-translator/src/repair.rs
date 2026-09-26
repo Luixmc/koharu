@@ -33,6 +33,27 @@ pub(crate) fn is_missing(source: &str, translation: &str) -> bool {
     source.trim() == translation.trim() && source.chars().any(char::is_alphabetic)
 }
 
+/// A translation where the model got stuck repeating itself: one character
+/// many more times in a row than the source has it ("～～～…"), or text far
+/// longer than any rendering of the source.
+pub(crate) fn is_runaway(source: &str, translation: &str) -> bool {
+    const RUN: usize = 20;
+    let longest_run = |text: &str| {
+        let mut longest = 0;
+        let mut run = 0;
+        let mut previous = None;
+        for character in text.chars().filter(|c| !c.is_whitespace()) {
+            run = if previous == Some(character) { run + 1 } else { 1 };
+            previous = Some(character);
+            longest = longest.max(run);
+        }
+        longest
+    };
+    let source_chars = source.chars().count();
+    (longest_run(translation) >= RUN && longest_run(source) < RUN)
+        || translation.chars().count() > 8 * source_chars + 80
+}
+
 /// Segments worth asking for again. A cut segment usually means the model
 /// split it and pushed everything after it one id along, so every segment from
 /// the first cut on is suspect.
@@ -45,6 +66,7 @@ pub(crate) fn suspects(sources: &[String], translations: &[String]) -> Vec<usize
         .filter(|&index| {
             first_cut.is_some_and(|cut| index >= cut)
                 || is_missing(&sources[index], &translations[index])
+                || is_runaway(&sources[index], &translations[index])
         })
         .collect()
 }
@@ -54,6 +76,7 @@ pub(crate) fn acceptable(source: &str, translation: &str) -> bool {
     !translation.trim().is_empty()
         && !is_cut(source, translation)
         && !is_missing(source, translation)
+        && !is_runaway(source, translation)
 }
 
 #[cfg(test)]
@@ -115,6 +138,26 @@ mod tests {
         let translations = strings(&["¿Cómo que no?", "Sí...", "!?"]);
 
         assert!(suspects(&sources, &translations).is_empty());
+    }
+
+    #[test]
+    fn a_repetition_loop_is_runaway() {
+        assert!(is_runaway("いや～ん", &format!("¡No{}", "～".repeat(300))));
+        assert!(is_runaway("はい", &"sí, ".repeat(40)));
+        assert!(!is_runaway("いや～ん", "¡No～!"));
+        assert!(!is_runaway("ああああああああああああああああああああああ", &"A".repeat(22)));
+        assert!(!is_runaway(
+            "Didn't we plan to use today as a side dish?",
+            "¿No habíamos planeado usar hoy como acompañamiento?"
+        ));
+    }
+
+    #[test]
+    fn a_runaway_segment_alone_is_suspect() {
+        let sources = strings(&["No way?", "いや～ん", "Yeah..."]);
+        let translations = strings(&["¿Cómo que no?", &"～".repeat(200), "Sí..."]);
+
+        assert_eq!(suspects(&sources, &translations), vec![1]);
     }
 
     #[test]

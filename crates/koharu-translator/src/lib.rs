@@ -142,18 +142,37 @@ impl Translator {
             request.remove_image();
         }
 
-        let mut translated = self.dispatch(selection, generation, &request).await?;
-        if matches!(
+        let machine = matches!(
             provider,
             Provider::DeepL | Provider::GoogleCloudTranslation | Provider::Caiyun
-        ) {
+        );
+        let (mut translated, batch_error) =
+            match self.dispatch(selection, generation, &request).await {
+                Ok(translated) => (translated, None),
+                // A language model whose reply for the page could not be read
+                // at all (a repetition loop from the first segment, prose
+                // instead of JSON) still gets a chance one segment at a time.
+                Err(error) if !machine && is_unreadable_reply(&error) => {
+                    tracing::warn!(
+                        provider = provider_id,
+                        "translation reply could not be read; asking for each segment alone: {error:#}"
+                    );
+                    (request.segments.clone(), Some(error))
+                }
+                Err(error) => return Err(error),
+            };
+        if machine {
             // Machine translation returns one result per segment; it cannot
             // misalign them.
             tracing::Span::current().record("outcome", "completed");
             return Ok((provider_id, translated));
         }
 
-        let suspects = repair::suspects(&request.segments, &translated);
+        let suspects = if batch_error.is_some() {
+            (0..request.segments.len()).collect()
+        } else {
+            repair::suspects(&request.segments, &translated)
+        };
         if !suspects.is_empty() {
             tracing::warn!(
                 provider = provider_id,
@@ -192,10 +211,25 @@ impl Translator {
                     }
                     Err(error) => {
                         tracing::warn!(provider = provider_id, "retry failed: {error:#}");
-                        break;
+                        // A loop is down to sampling and may not come back;
+                        // anything else (the server is gone) will.
+                        if !is_unreadable_reply(&error) {
+                            break;
+                        }
                     }
                 }
             }
+            // A loop left in place would fill the balloon with "～～～"; the
+            // source text at least shows what is still to translate.
+            if !repaired[index] && repair::is_runaway(&request.segments[index], &translated[index])
+            {
+                translated[index] = request.segments[index].clone();
+            }
+        }
+        if let Some(error) = batch_error
+            && !repaired.contains(&true)
+        {
+            return Err(error);
         }
         tracing::Span::current().record("outcome", "completed");
         Ok((provider_id, translated))
@@ -269,6 +303,14 @@ impl Translator {
     }
 }
 
+/// A reply that arrived but could not be parsed as translations, as opposed to
+/// a request that failed (network, authentication, a model that won't load).
+fn is_unreadable_reply(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<serde_json::Error>().is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,6 +323,25 @@ mod tests {
             vision: true,
             reasoning: true,
         }
+    }
+
+    #[test]
+    fn only_replies_that_fail_to_parse_are_unreadable() {
+        let source = ["one".to_owned()];
+        let parse: anyhow::Error = Error::from(
+            prompt::translations("test", "{\"translations\":[{\"id\":0,\"text\":\"hel", &source)
+                .unwrap_err(),
+        )
+        .into();
+        assert!(is_unreadable_reply(&parse));
+
+        let api: anyhow::Error = Error::Api {
+            provider: "test",
+            status: 500,
+            message: "down".to_owned(),
+        }
+        .into();
+        assert!(!is_unreadable_reply(&api));
     }
 
     #[test]
