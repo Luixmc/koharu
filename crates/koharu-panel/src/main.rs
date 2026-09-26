@@ -77,6 +77,8 @@ impl Step {
 enum Event {
     Output(String),
     Exited(Option<i32>),
+    /// `khr etiquetas` finished: the gallery as JSON, or why it failed.
+    Gallery(Result<String, String>),
 }
 
 /// How far the running step has got, from khr's `@progreso` lines.
@@ -124,6 +126,10 @@ struct Panel {
     /// to `khr estudiar` as a starting point it compares with the text.
     tags: String,
     description: String,
+    /// e-hentai gallery number or link to take tags from, and whether a
+    /// fetch is under way.
+    gallery: String,
+    fetching_gallery: bool,
     translate: bool,
     review_step: bool,
     llm_translation: bool,
@@ -176,6 +182,8 @@ impl Panel {
             study: true,
             tags: String::new(),
             description: String::new(),
+            gallery: String::new(),
+            fetching_gallery: false,
             translate: true,
             review_step: true,
             llm_translation: true,
@@ -431,6 +439,7 @@ impl Panel {
                         }
                     }
                 }
+                Event::Gallery(result) => self.apply_gallery(result),
                 Event::Exited(code) => {
                     if !self.partial.is_empty() {
                         let rest = std::mem::take(&mut self.partial);
@@ -645,6 +654,7 @@ impl Panel {
             .map(|tags| tags.iter().filter_map(|tag| tag.as_str()).collect::<Vec<_>>().join(", "))
             .unwrap_or_default();
         self.description = notes["descripcion"].as_str().unwrap_or_default().to_owned();
+        self.gallery.clear();
     }
 
     /// Writes the tags and description for `khr estudiar`; empty fields
@@ -670,6 +680,75 @@ impl Panel {
             "descripcion": self.description.trim(),
         });
         std::fs::write(path, serde_json::to_string_pretty(&notes).unwrap_or_default())
+    }
+
+    /// Asks `khr etiquetas` for the gallery's tags without blocking the window.
+    fn fetch_gallery(&mut self, ctx: &egui::Context) {
+        let input = self.gallery.trim().to_owned();
+        if input.is_empty() {
+            return;
+        }
+        self.fetching_gallery = true;
+        self.status = format!("Buscando la galería {input} en e-hentai...");
+        let khr = self.khr.clone();
+        let tx = self.events.0.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = Command::new(khr)
+                .args(["etiquetas", "--galeria", &input])
+                .stdin(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map_err(|error| error.to_string())
+                .and_then(|output| {
+                    if output.status.success() {
+                        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+                    } else {
+                        let error = String::from_utf8_lossy(&output.stderr);
+                        Err(error.lines().last().unwrap_or("error desconocido").to_owned())
+                    }
+                });
+            let _ = tx.send(Event::Gallery(result));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Adds the fetched tags to the field, and the title when the
+    /// description is still empty.
+    fn apply_gallery(&mut self, result: Result<String, String>) {
+        self.fetching_gallery = false;
+        let gallery = match result.and_then(|json| {
+            serde_json::from_str::<serde_json::Value>(&json).map_err(|error| error.to_string())
+        }) {
+            Ok(gallery) => gallery,
+            Err(error) => {
+                self.status = format!("No se pudieron traer las etiquetas: {error}");
+                return;
+            }
+        };
+        let mut tags: Vec<String> = self
+            .tags
+            .split([',', ';', '\n'])
+            .map(|tag| tag.trim().to_owned())
+            .filter(|tag| !tag.is_empty())
+            .collect();
+        let before = tags.len();
+        for tag in gallery["etiquetas"].as_array().into_iter().flatten().filter_map(|tag| tag.as_str()) {
+            if !tags.iter().any(|known| known == tag) {
+                tags.push(tag.to_owned());
+            }
+        }
+        self.tags = tags.join(", ");
+        if self.description.trim().is_empty() {
+            let title = [&gallery["titulo_original"], &gallery["titulo"]]
+                .into_iter()
+                .filter_map(|title| title.as_str())
+                .find(|title| !title.is_empty());
+            if let Some(title) = title {
+                self.description = format!("Título: {title}");
+            }
+        }
+        self.status = format!("{} etiqueta(s) nuevas de e-hentai.", tags.len() - before);
     }
 
     fn load_glossary(&mut self) {
@@ -1156,6 +1235,25 @@ impl eframe::App for Panel {
                     if self.study {
                         cols[0].indent("user_notes", |ui| {
                             ui.label("Antes de la ficha (opcional); la IA lo compara con lo que lee:");
+                            let mut fetch = false;
+                            ui.horizontal(|ui| {
+                                let field = ui.add(
+                                    egui::TextEdit::singleline(&mut self.gallery)
+                                        .hint_text("Nº o enlace de galería e-hentai")
+                                        .desired_width(200.0),
+                                );
+                                let entered =
+                                    field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                                let ready = !self.fetching_gallery && !self.gallery.trim().is_empty();
+                                let button = ui.add_enabled(ready, egui::Button::new("Traer etiquetas"));
+                                fetch = ready && (button.clicked() || entered);
+                                if self.fetching_gallery {
+                                    ui.spinner();
+                                }
+                            });
+                            if fetch {
+                                self.fetch_gallery(ui.ctx());
+                            }
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.tags)
                                     .hint_text("Etiquetas, separadas por comas")

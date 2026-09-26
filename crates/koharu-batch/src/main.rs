@@ -20,6 +20,7 @@ use koharu_translator::ProvidersConfig;
 
 mod escenas;
 mod estudio;
+mod galeria;
 mod obra;
 mod revision;
 
@@ -256,6 +257,17 @@ enum Command {
         /// Page number, from 1.
         #[arg(long)]
         page: usize,
+    },
+
+    /// Fetch an e-hentai gallery's title and tags, to start the work's notes from.
+    Etiquetas {
+        /// Gallery number, number/token, or the gallery's link.
+        #[arg(long)]
+        galeria: String,
+
+        /// Add the tags to this project's usuario.json, which `estudiar` reads.
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: Option<PathBuf>,
     },
 
     /// Read the whole work and write its notes (characters, tone) and term proposals.
@@ -818,6 +830,7 @@ async fn main() -> Result<()> {
             base_url,
             model,
         } => estudio::learn(&project, &base_url, &model).await,
+        Command::Etiquetas { galeria, project } => galeria::run(&galeria, project.as_deref()).await,
         Command::Escenas {
             provider,
             model,

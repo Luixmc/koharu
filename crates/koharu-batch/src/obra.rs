@@ -147,6 +147,12 @@ impl Work {
             .filter(|notes| !notes.is_empty())
     }
 
+    pub fn write_user_notes(&self, notes: &UserNotes) -> Result<()> {
+        self.ensure_dir()?;
+        std::fs::write(self.user_notes_path(), serde_json::to_string_pretty(notes)?)
+            .with_context(|| format!("failed to write {}", self.user_notes_path().display()))
+    }
+
     pub fn page_notes(&self) -> Vec<PageNote> {
         std::fs::read_to_string(self.page_notes_path())
             .ok()
