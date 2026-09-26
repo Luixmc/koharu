@@ -1,0 +1,1311 @@
+{
+  "_nota": "Casos redactados para la prueba, no citas de ninguna obra. Todos los personajes son adultos. Cada caso trae los globos anteriores de la página (escena) y la línea a evaluar (ref), que es la última. Las trampas solo se resuelven leyendo la escena o la ficha; los controles usan el mismo vocabulario en una escena no sexual y miden la sobre-interpretación. Los casos con \"idioma\" ja, ko o zh repiten las mismas trampas en el idioma de origen; sin \"idioma\" son inglés.",
+  "ficha": "Género: comedia romántica erótica para adultos.\nTono: cariñoso y muy explícito en las escenas de sexo; cotidiano fuera de ellas.\nResumen: Kaito y Mio, un matrimonio joven, intentan tener tiempo para ellos entre el trabajo y las visitas de la familia.\n\n## Personajes\n- Kaito (28 años): oficinista, marido de Mio. Relaciones: esposo de Mio; subordinado de Sayaka en la oficina. Habla: relajado, bromista, vulgar en la cama.\n- Mio (27 años): diseñadora, esposa de Kaito. Relaciones: hermana menor de Rin. Habla: dulce, se vuelve atrevida en la intimidad; llama a Rin \"big sis\".\n- Sayaka (32 años): jefa de Kaito. Relaciones: Kaito la llama \"senpai\". Habla: seca y exigente.\n- Rin (30 años): hermana mayor de Mio, visita a menudo. Habla: mandona y burlona.",
+  "glosario": "senpai\tsenpai\thonorífico; nunca \"superior\" ni \"jefa\"\nbig sis\tnee-chan\tasí llama Mio a Rin\ncock\tverga\ndick\tverga\npussy\tcoño\ncum\tvenirse\tverbo; como sustantivo, semen o leche\n先輩\tsenpai\thonorífico\n선배\tsenpai\thonorífico\n前辈\tsenpai\thonorífico\nお姉ちゃん\tnee-chan\tasí llama Mio a Rin\n언니\tnee-chan\tasí llama Mio a Rin\n姐姐\tnee-chan\tasí llama Mio a Rin\nカイト\tKaito\nミオ\tMio\n카이토\tKaito\n미오\tMio\n海斗\tKaito\n澪\tMio\nお義姉さん\tcuñada\tasí llama Kaito a Rin\n老公\tcariño\tasí llama Mio a Kaito\n",
+  "casos": [
+    {
+      "escena": [
+        "Mio... you're so hot tonight.",
+        "Don't stop, Kaito... faster... faster!"
+      ],
+      "ref": "I'M COMING!",
+      "check": "contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "acabando",
+        "corro",
+        "corriendo",
+        "me voy a venir",
+        "acabar",
+        "venirme",
+        "correrme"
+      ],
+      "trampa": "\"I'm coming\" en pleno sexo es un orgasmo, no \"ya voy\""
+    },
+    {
+      "escena": [
+        "Kaito! Dinner's ready!"
+      ],
+      "ref": "I'M COMING!",
+      "check": "no_contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "corro",
+        "venir"
+      ],
+      "trampa": "control: llamada a cenar, es \"ya voy\"",
+      "control": true
+    },
+    {
+      "escena": [
+        "Mio, you're pressing against me like that on purpose...",
+        "Look what you did to me."
+      ],
+      "ref": "IT'S SO HARD...",
+      "check": "contiene",
+      "value": [
+        "dura",
+        "duro",
+        "erect",
+        "parad"
+      ],
+      "trampa": "\"hard\" se refiere a la erección, no a algo difícil"
+    },
+    {
+      "escena": [
+        "This quarterly report is due at nine.",
+        "Senpai, I've been at it for six hours."
+      ],
+      "ref": "IT'S SO HARD...",
+      "check": "no_contiene",
+      "value": [
+        "erect",
+        "parad",
+        "verga",
+        "excit"
+      ],
+      "trampa": "control: un informe difícil no es una erección",
+      "control": true
+    },
+    {
+      "escena": [
+        "Mio, kneel down for me.",
+        "You promised to spoil me tonight."
+      ],
+      "ref": "COME ON, BLOW ME.",
+      "check": "contiene",
+      "value": [
+        "chúp",
+        "chup",
+        "mám",
+        "mam"
+      ],
+      "trampa": "\"blow me\" es pedir sexo oral, no \"sóplame\""
+    },
+    {
+      "escena": [
+        "Kaito... slowly, it's been a while...",
+        "Ahh... it's all the way in..."
+      ],
+      "ref": "YOU'RE SO TIGHT...",
+      "check": "contiene",
+      "value": [
+        "estrech",
+        "apretad"
+      ],
+      "trampa": "\"tight\" en la penetración es estrecha o apretada, no tacaña ni tensa"
+    },
+    {
+      "escena": [
+        "You won't even pay for my coffee?",
+        "Kaito, it was two hundred yen."
+      ],
+      "ref": "YOU'RE SO TIGHT!",
+      "check": "no_contiene",
+      "value": [
+        "estrech",
+        "apretad"
+      ],
+      "trampa": "control: aquí \"tight\" es tacaño",
+      "control": true
+    },
+    {
+      "escena": [
+        "Kaito, I'm close... I'm so close...",
+        "Wrap your legs around me, Mio."
+      ],
+      "ref": "DON'T PULL OUT!",
+      "check": "contiene",
+      "value": [
+        "saques",
+        "sacar",
+        "sácala",
+        "salgas de mí",
+        "te salgas",
+        "dentro",
+        "adentro"
+      ],
+      "trampa": "\"pull out\" es sacar el pene, no retirarse"
+    },
+    {
+      "escena": [
+        "Careful, there's a truck coming!",
+        "Kaito, wait, the light's still red!"
+      ],
+      "ref": "DON'T PULL OUT YET!",
+      "check": "no_contiene",
+      "value": [
+        "saques",
+        "sácala",
+        "dentro",
+        "adentro"
+      ],
+      "trampa": "control: al volante es no arrancar o no salir todavía",
+      "control": true
+    },
+    {
+      "escena": [
+        "Haah... haah...",
+        "Look at my stomach, Kaito... it's all sticky."
+      ],
+      "ref": "YOU CAME SO MUCH...",
+      "check": "contiene",
+      "value": [
+        "te viniste",
+        "te has venido",
+        "acabaste",
+        "te corriste",
+        "eyacul",
+        "soltaste",
+        "echaste",
+        "leche",
+        "semen",
+        "corrido"
+      ],
+      "trampa": "\"came\" es eyacular, no \"viniste\" de llegar"
+    },
+    {
+      "escena": [
+        "The client signed the contract!",
+        "I couldn't have done it without your advice."
+      ],
+      "ref": "THANK YOU, SENPAI!",
+      "check": "contiene",
+      "value": [
+        "senpai"
+      ],
+      "trampa": "el glosario fija \"senpai\"; no debe quedar \"superior\" ni \"jefa\""
+    },
+    {
+      "escena": [
+        "Rin's here for the weekend again?",
+        "She's leaving with our only umbrella!"
+      ],
+      "ref": "BIG SIS, WAIT!",
+      "check": "contiene",
+      "value": [
+        "nee-chan"
+      ],
+      "trampa": "el glosario fija \"big sis\" como \"nee-chan\""
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "ミオ…今夜はすごく熱いね",
+        "カイト…やめないで…もっと…もっと！"
+      ],
+      "ref": "イクッ！イッちゃう！",
+      "check": "contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "acabando",
+        "corro",
+        "corriendo",
+        "me voy a venir",
+        "me vengo",
+        "acabar",
+        "venirme",
+        "correrme"
+      ],
+      "trampa": "「イク」は orgasmo, no «ir»"
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "カイト！ご飯できたよ！"
+      ],
+      "ref": "今いく！",
+      "check": "no_contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "corro",
+        "venir"
+      ],
+      "trampa": "control: llamada a cenar, es «ya voy»",
+      "control": true
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "ミオ、わざと押し付けてるだろ…",
+        "ほら、こんなになっちゃった"
+      ],
+      "ref": "すごく硬い…",
+      "check": "contiene",
+      "value": [
+        "dura",
+        "duro",
+        "erect",
+        "parad"
+      ],
+      "trampa": "「硬い」 es la erección"
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "このフランスパン、三日前のだよ",
+        "カイト、かじってみて"
+      ],
+      "ref": "すごく硬い…",
+      "check": "no_contiene",
+      "value": [
+        "erect",
+        "parad",
+        "verga",
+        "excit"
+      ],
+      "trampa": "control: pan duro",
+      "control": true
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "カイト、もうすぐ…もうすぐなの…",
+        "脚を絡めて、ミオ"
+      ],
+      "ref": "中に出して！",
+      "check": "contiene",
+      "value": [
+        "dentro",
+        "adentro"
+      ],
+      "trampa": "「中に出して」 es eyacular dentro, no «sácalo»"
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "雨が強くなってきたよ",
+        "ミオ、玄関で濡れてないで"
+      ],
+      "ref": "早く中に入って！",
+      "check": "no_contiene",
+      "value": [
+        "semen",
+        "leche",
+        "córrete",
+        "vente",
+        "acaba"
+      ],
+      "trampa": "control: entrar a la casa",
+      "control": true
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "はぁ…はぁ…",
+        "お腹見て、カイト…ベトベトだよ"
+      ],
+      "ref": "いっぱい出たね…",
+      "check": "contiene",
+      "value": [
+        "te viniste",
+        "te has venido",
+        "acabaste",
+        "te corriste",
+        "eyacul",
+        "soltaste",
+        "echaste",
+        "leche",
+        "semen",
+        "corrida",
+        "corrido"
+      ],
+      "trampa": "「出た」 es eyacular, sujeto omitido"
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "契約取れました！",
+        "先輩のアドバイスのおかげです"
+      ],
+      "ref": "ありがとうございます、先輩！",
+      "check": "contiene",
+      "value": [
+        "senpai"
+      ],
+      "trampa": "glosario: 先輩 → senpai"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "미오… 오늘 밤 너무 뜨거워",
+        "카이토… 멈추지 마… 더… 더 빨리!"
+      ],
+      "ref": "갈 것 같아! 가버려!",
+      "check": "contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "acabando",
+        "corro",
+        "corriendo",
+        "me voy a venir",
+        "me vengo",
+        "acabar",
+        "venirme",
+        "correrme",
+        "venirte",
+        "correrte",
+        "acabes",
+        "vengas",
+        "corras"
+      ],
+      "trampa": "「가버려」 es orgasmo, no «vete»"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "카이토! 저녁 다 됐어!"
+      ],
+      "ref": "지금 갈게!",
+      "check": "no_contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "corro",
+        "venir"
+      ],
+      "trampa": "control: llamada a cenar",
+      "control": true
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "아… 카이토… 나 이제…",
+        "같이 가자, 미오"
+      ],
+      "ref": "쌀 것 같아…!",
+      "check": "contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "acabando",
+        "corro",
+        "corriendo",
+        "me voy a venir",
+        "me vengo",
+        "eyacul",
+        "acabar",
+        "venirme",
+        "correrme",
+        "venirte",
+        "correrte",
+        "acabes",
+        "vengas",
+        "corras"
+      ],
+      "trampa": "「싸다」 en la cama es eyacular, no «barato»"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "이 코트 원래 30만 원이었대",
+        "세일해서 5만 원이래!"
+      ],
+      "ref": "진짜 싸다!",
+      "check": "contiene",
+      "value": [
+        "barat",
+        "ganga",
+        "regalado",
+        "precio"
+      ],
+      "trampa": "control: 싸다 es barato",
+      "control": true
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "미오, 일부러 그렇게 비비는 거지…",
+        "봐, 이렇게 됐잖아"
+      ],
+      "ref": "너무 딱딱해…",
+      "check": "contiene",
+      "value": [
+        "dura",
+        "duro",
+        "erect",
+        "parad"
+      ],
+      "trampa": "「딱딱해」 es la erección"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "계약 따냈어요!",
+        "선배 조언 덕분이에요"
+      ],
+      "ref": "고마워요, 선배!",
+      "check": "contiene",
+      "value": [
+        "senpai"
+      ],
+      "trampa": "glosario: 선배 → senpai"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "린 언니 또 주말에 와?",
+        "우리 하나뿐인 우산 들고 나간다!"
+      ],
+      "ref": "언니, 기다려!",
+      "check": "contiene",
+      "value": [
+        "nee-chan"
+      ],
+      "trampa": "glosario: 언니 → nee-chan"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "澪…你今晚好热情",
+        "海斗…别停…再快一点…快！"
+      ],
+      "ref": "我要去了！",
+      "check": "contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "acabando",
+        "corro",
+        "corriendo",
+        "me voy a venir",
+        "me vengo",
+        "acabar",
+        "venirme",
+        "correrme"
+      ],
+      "trampa": "「我要去了」 en el sexo es orgasmo, no «me voy»"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "海斗！该出门了，要迟到了！"
+      ],
+      "ref": "我要去了！",
+      "check": "no_contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "corro",
+        "venir"
+      ],
+      "trampa": "control: salir de casa, es «ya me voy»",
+      "control": true
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "澪，你是故意这样蹭我的吧…",
+        "你看，都变成这样了"
+      ],
+      "ref": "好硬…",
+      "check": "contiene",
+      "value": [
+        "dura",
+        "duro",
+        "erect",
+        "parad"
+      ],
+      "trampa": "「好硬」 es la erección"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "这块牛排煎太久了",
+        "海斗，你切一下试试"
+      ],
+      "ref": "好硬…",
+      "check": "no_contiene",
+      "value": [
+        "erect",
+        "parad",
+        "verga",
+        "excit"
+      ],
+      "trampa": "control: carne dura",
+      "control": true
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "海斗，我快不行了…",
+        "用腿缠住我，澪"
+      ],
+      "ref": "射在里面！",
+      "check": "contiene",
+      "value": [
+        "dentro",
+        "adentro"
+      ],
+      "trampa": "「射在里面」 es eyacular dentro"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "哈…哈…",
+        "海斗，你看我肚子上…黏糊糊的"
+      ],
+      "ref": "你射了好多…",
+      "check": "contiene",
+      "value": [
+        "te viniste",
+        "te has venido",
+        "acabaste",
+        "te corriste",
+        "eyacul",
+        "soltaste",
+        "echaste",
+        "leche",
+        "semen",
+        "corrida",
+        "corrido"
+      ],
+      "trampa": "「射」 es eyacular"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "比赛最后一分钟！",
+        "海斗带球冲进禁区了！"
+      ],
+      "ref": "射了！进了！",
+      "check": "no_contiene",
+      "value": [
+        "eyacul",
+        "semen",
+        "leche",
+        "corri",
+        "viniste"
+      ],
+      "trampa": "control: 射门 es tirar a puerta",
+      "control": true
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "客户签合同了！",
+        "多亏了前辈的建议"
+      ],
+      "ref": "谢谢前辈！",
+      "check": "contiene",
+      "value": [
+        "senpai"
+      ],
+      "trampa": "glosario: 前辈 → senpai"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "미오… 다리 벌려봐",
+        "카이토, 빨리… 참을 수가 없어"
+      ],
+      "ref": "더 세게 박아줘!",
+      "check": "contiene",
+      "value": [
+        "fuerte",
+        "duro",
+        "clav",
+        "mét",
+        "embist",
+        "dale"
+      ],
+      "trampa": "「박아줘」 en la cama es penetrar, no clavar un clavo"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "벽에 못 하나만 박아줘",
+        "액자 걸 거야"
+      ],
+      "ref": "망치로 세게 박아줘!",
+      "check": "no_contiene",
+      "value": [
+        "métemela",
+        "follar",
+        "coger",
+        "penetr",
+        "embist",
+        "dentro"
+      ],
+      "trampa": "control: 박다 aquí es clavar",
+      "control": true
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "카이토… 나 이제 한계야…",
+        "참지 마, 미오"
+      ],
+      "ref": "먼저 가버려도 돼…",
+      "check": "contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "acabando",
+        "corro",
+        "corriendo",
+        "me voy a venir",
+        "me vengo",
+        "acabar",
+        "venirme",
+        "correrme",
+        "venirte",
+        "correrte",
+        "acabes",
+        "vengas",
+        "corras"
+      ],
+      "trampa": "「먼저 가버려」 es correrse primero, no irse antes"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "린 언니, 나 오늘 야근이야",
+        "기다리지 말고"
+      ],
+      "ref": "먼저 가도 돼!",
+      "check": "no_contiene",
+      "value": [
+        "venir",
+        "acab",
+        "corr"
+      ],
+      "trampa": "control: puede irse a casa primero",
+      "control": true
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "카이토, 안에… 안에다…",
+        "미오, 나도 이제…"
+      ],
+      "ref": "안에다 싸줘!",
+      "check": "contiene",
+      "value": [
+        "dentro",
+        "adentro"
+      ],
+      "trampa": "「안에다 싸줘」 es eyacular dentro"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "하아… 하아…",
+        "카이토, 배 좀 봐… 끈적끈적해"
+      ],
+      "ref": "엄청 많이 쌌네…",
+      "check": "contiene",
+      "value": [
+        "te viniste",
+        "te has venido",
+        "acabaste",
+        "te corriste",
+        "eyacul",
+        "soltaste",
+        "echaste",
+        "leche",
+        "semen",
+        "corrida",
+        "corrido"
+      ],
+      "trampa": "「쌌네」 es eyacular, sujeto omitido"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "미오, 그렇게 보지 마…",
+        "이것 봐, 또…"
+      ],
+      "ref": "또 섰어…",
+      "check": "contiene",
+      "value": [
+        "erect",
+        "parad",
+        "paró",
+        "dura",
+        "duro",
+        "levant"
+      ],
+      "trampa": "「섰어」 es la erección, no que algo se detuvo"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "버스가 드디어 왔다!",
+        "카이토, 저기 봐"
+      ],
+      "ref": "버스 섰어!",
+      "check": "no_contiene",
+      "value": [
+        "erect",
+        "verga",
+        "excit",
+        "dura",
+        "duro"
+      ],
+      "trampa": "control: el autobús se detuvo",
+      "control": true
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "사야카 선배가 카이토 씨를 노린대",
+        "회식 끝나고 데려간다던데"
+      ],
+      "ref": "오늘 밤 먹을 생각인가 봐.",
+      "check": "contiene",
+      "value": [
+        "tirár",
+        "tirar",
+        "acost",
+        "cama",
+        "comérselo",
+        "follár",
+        "follar",
+        "cogér",
+        "coger",
+        "seduc",
+        "ligar"
+      ],
+      "trampa": "「먹다」 aquí es acostarse con él, no comer"
+    },
+    {
+      "idioma": "ko",
+      "escena": [
+        "회식 메뉴 삼겹살이래",
+        "사야카 선배가 쏜대"
+      ],
+      "ref": "오늘 밤 먹을 생각인가 봐.",
+      "check": "no_contiene",
+      "value": [
+        "tirár",
+        "tirar",
+        "acost",
+        "cama",
+        "follar",
+        "coger",
+        "seduc",
+        "comérselo"
+      ],
+      "trampa": "control: cena de empresa, es comer",
+      "control": true
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "カイト…もう我慢できない…",
+        "ミオ、どうしてほしい？"
+      ],
+      "ref": "早く入れて…！",
+      "check": "contiene",
+      "value": [
+        "mét",
+        "dentro",
+        "adentro",
+        "penetr"
+      ],
+      "trampa": "「入れて」 en la cama es penetrar, no «déjame entrar»"
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "外、すごい雨だよ",
+        "カイト、傘持ってない"
+      ],
+      "ref": "早く入れて！",
+      "check": "no_contiene",
+      "value": [
+        "métela",
+        "métemela",
+        "mételo",
+        "penetr",
+        "verga"
+      ],
+      "trampa": "control: dejar entrar a casa",
+      "control": true
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "カイト…そこ…",
+        "もっと、もっと…"
+      ],
+      "ref": "奥に当たってる…！",
+      "check": "contiene",
+      "value": [
+        "fondo",
+        "profund"
+      ],
+      "trampa": "「奥に当たってる」 es llegar hasta el fondo"
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "カイト、もうすぐ…",
+        "脚、離さないからね"
+      ],
+      "ref": "抜かないで…！",
+      "check": "contiene",
+      "value": [
+        "saques",
+        "sacar",
+        "sácala",
+        "dentro",
+        "adentro",
+        "salgas"
+      ],
+      "trampa": "「抜かないで」 es no sacarla"
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "このワイン、特別な日のなの",
+        "カイト、まだ早いよ"
+      ],
+      "ref": "まだ抜かないで！",
+      "check": "contiene",
+      "value": [
+        "destap",
+        "abr",
+        "descorch"
+      ],
+      "trampa": "control: no descorchar el vino",
+      "control": true
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "リンさん、また週末泊まりに来るの？",
+        "うちの傘持って帰っちゃうよ！"
+      ],
+      "ref": "お義姉さん、待って！",
+      "check": "contiene",
+      "value": [
+        "cuñad"
+      ],
+      "trampa": "glosario: お義姉さん → cuñada"
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "最近、残業ばっかりで…",
+        "カイト、一週間もしてないよね"
+      ],
+      "ref": "溜まってるでしょ？",
+      "check": "contiene",
+      "value": [
+        "ganas",
+        "cargad",
+        "caliente",
+        "necesit",
+        "excit",
+        "deseo"
+      ],
+      "trampa": "「溜まってる」 es deseo acumulado, no cosas amontonadas"
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "洗い物、流しに山積みだよ",
+        "カイト、見て"
+      ],
+      "ref": "溜まってるでしょ？",
+      "check": "no_contiene",
+      "value": [
+        "ganas",
+        "cargad",
+        "caliente",
+        "excit",
+        "deseo"
+      ],
+      "trampa": "control: platos acumulados",
+      "control": true
+    },
+    {
+      "idioma": "ja",
+      "escena": [
+        "ミオ、まだダメだよ",
+        "お願い、カイト…"
+      ],
+      "ref": "イかせて…！",
+      "check": "contiene",
+      "value": [
+        "vengo",
+        "viniendo",
+        "acabo",
+        "acabando",
+        "corro",
+        "corriendo",
+        "me voy a venir",
+        "me vengo",
+        "acabar",
+        "venirme",
+        "correrme",
+        "venirte",
+        "correrte",
+        "acabes",
+        "vengas",
+        "corras",
+        "hazme venir",
+        "hazme acabar"
+      ],
+      "trampa": "「イかせて」 es pedir el orgasmo"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "海斗…我受不了了…",
+        "澪，你想要什么？"
+      ],
+      "ref": "快插进来…！",
+      "check": "contiene",
+      "value": [
+        "mét",
+        "dentro",
+        "adentro",
+        "penetr"
+      ],
+      "trampa": "「插进来」 en la cama es penetrar"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "U盘在哪？",
+        "海斗，电脑开着呢"
+      ],
+      "ref": "快插进来！",
+      "check": "no_contiene",
+      "value": [
+        "métela",
+        "métemela",
+        "penetr",
+        "verga",
+        "dentro de mí"
+      ],
+      "trampa": "control: conectar el USB",
+      "control": true
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "海斗…那里…",
+        "再深一点…"
+      ],
+      "ref": "顶到最里面了…！",
+      "check": "contiene",
+      "value": [
+        "fondo",
+        "profund"
+      ],
+      "trampa": "「顶到最里面」 es llegar hasta el fondo"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "澪，把腿张开",
+        "今晚不让你睡了"
+      ],
+      "ref": "我要干你一整晚。",
+      "check": "contiene",
+      "value": [
+        "follar",
+        "coger",
+        "tirar",
+        "hacerte el amor",
+        "darte duro",
+        "dártelo",
+        "follarte",
+        "cogerte",
+        "tirarte"
+      ],
+      "trampa": "「干你」 es follar, no «hacer»"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "这些衣服晒了一天了",
+        "海斗，摸摸看"
+      ],
+      "ref": "都干了！",
+      "check": "contiene",
+      "value": [
+        "sec"
+      ],
+      "trampa": "control: 干 aquí es seco",
+      "control": true
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "老公，浴缸的水满出来了！",
+        "快来帮忙！"
+      ],
+      "ref": "老公，快点！",
+      "check": "contiene",
+      "value": [
+        "cariño"
+      ],
+      "trampa": "glosario: 老公 → cariño"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "最近一直加班…",
+        "海斗，你一个星期都没碰我了"
+      ],
+      "ref": "憋坏了吧？",
+      "check": "contiene",
+      "value": [
+        "ganas",
+        "cargad",
+        "caliente",
+        "necesit",
+        "excit",
+        "deseo"
+      ],
+      "trampa": "「憋坏了」 es deseo contenido"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "堵车两个小时了",
+        "海斗，找不到厕所"
+      ],
+      "ref": "憋坏了吧？",
+      "check": "no_contiene",
+      "value": [
+        "cargad",
+        "caliente",
+        "excit",
+        "deseo",
+        "sexo"
+      ],
+      "trampa": "control: aguantarse las ganas de ir al baño",
+      "control": true
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "海斗，我快到了…",
+        "腿夹紧我，澪"
+      ],
+      "ref": "别拔出来！",
+      "check": "contiene",
+      "value": [
+        "saques",
+        "sacar",
+        "sácala",
+        "dentro",
+        "adentro",
+        "salgas"
+      ],
+      "trampa": "「别拔出来」 es no sacarla"
+    },
+    {
+      "idioma": "zh",
+      "escena": [
+        "这颗牙还晃呢",
+        "医生说再等等"
+      ],
+      "ref": "别拔出来！",
+      "check": "no_contiene",
+      "value": [
+        "sácala",
+        "dentro",
+        "adentro"
+      ],
+      "trampa": "control: no sacar el diente",
+      "control": true
+    },
+    {
+      "idioma": "en",
+      "escena": [
+        "Kaito, spread my legs...",
+        "I want your tongue."
+      ],
+      "ref": "EAT ME OUT...",
+      "check": "contiene",
+      "value": [
+        "cóme",
+        "chúp",
+        "chup",
+        "lám",
+        "lamer",
+        "lame "
+      ],
+      "trampa": "\"eat me out\" es sexo oral, no comer fuera"
+    },
+    {
+      "idioma": "en",
+      "escena": [
+        "The restaurant's closed again?",
+        "Mio, let's just order in."
+      ],
+      "ref": "LET'S EAT OUT TONIGHT.",
+      "check": "no_contiene",
+      "value": [
+        "cóme",
+        "chup",
+        "lám",
+        "lamer"
+      ],
+      "trampa": "control: cenar fuera",
+      "control": true
+    },
+    {
+      "idioma": "en",
+      "escena": [
+        "Kaito, lie down.",
+        "It's my turn to be on top."
+      ],
+      "ref": "LET ME RIDE YOU.",
+      "check": "contiene",
+      "value": [
+        "mont",
+        "cabalg",
+        "encima"
+      ],
+      "trampa": "\"ride you\" es cabalgar encima"
+    },
+    {
+      "idioma": "en",
+      "escena": [
+        "The bike's fixed!",
+        "Kaito, can I try it?"
+      ],
+      "ref": "LET ME RIDE IT!",
+      "check": "no_contiene",
+      "value": [
+        "cabalg",
+        "encima de ti",
+        "montarte"
+      ],
+      "trampa": "control: montar en bici",
+      "control": true
+    },
+    {
+      "idioma": "en",
+      "escena": [
+        "Kaito... touch me there...",
+        "Mio, you're..."
+      ],
+      "ref": "SO WET ALREADY...",
+      "check": "contiene",
+      "value": [
+        "mojad",
+        "húmed",
+        "empapad"
+      ],
+      "trampa": "\"wet\" es excitación"
+    },
+    {
+      "idioma": "en",
+      "escena": [
+        "Kaito, bend me over the desk.",
+        "Nobody's in the office now."
+      ],
+      "ref": "BANG ME HARD!",
+      "check": "contiene",
+      "value": [
+        "follar",
+        "fóllame",
+        "cógeme",
+        "coger",
+        "dame duro",
+        "dale duro",
+        "métemela",
+        "dámelo",
+        "dámela"
+      ],
+      "trampa": "\"bang me\" es follar, no golpear"
+    },
+    {
+      "idioma": "en",
+      "escena": [
+        "The door's stuck again.",
+        "Kaito, use your shoulder."
+      ],
+      "ref": "BANG IT HARD!",
+      "check": "no_contiene",
+      "value": [
+        "fóllame",
+        "cógeme",
+        "métemela",
+        "follar"
+      ],
+      "trampa": "control: golpear la puerta",
+      "control": true
+    },
+    {
+      "idioma": "en",
+      "escena": [
+        "Haah... Kaito...",
+        "It's dripping out of me..."
+      ],
+      "ref": "WHAT A BIG LOAD...",
+      "check": "contiene",
+      "value": [
+        "te viniste",
+        "te has venido",
+        "acabaste",
+        "te corriste",
+        "eyacul",
+        "soltaste",
+        "echaste",
+        "leche",
+        "semen",
+        "corrida",
+        "corrido",
+        "carga"
+      ],
+      "trampa": "\"load\" es la eyaculación"
+    },
+    {
+      "idioma": "en",
+      "escena": [
+        "Mio, are you sure?",
+        "Yes... I've waited all day."
+      ],
+      "ref": "GIVE IT TO ME!",
+      "check": "contiene",
+      "value": [
+        "dámela",
+        "métemela",
+        "dámelo",
+        "mét"
+      ],
+      "trampa": "\"give it to me\" es pedir sexo"
+    },
+    {
+      "idioma": "en",
+      "escena": [
+        "That's my phone, Kaito!",
+        "Stop reading my messages!"
+      ],
+      "ref": "GIVE IT TO ME!",
+      "check": "no_contiene",
+      "value": [
+        "métemela",
+        "mét",
+        "dámela"
+      ],
+      "trampa": "control: devuélveme el teléfono",
+      "control": true
+    }
+  ]
+}

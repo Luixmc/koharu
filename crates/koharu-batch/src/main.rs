@@ -13,10 +13,15 @@ use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
 use futures::StreamExt as _;
 use koharu_pipeline::{
-    Committer, Pipeline, PipelineConfig, Progress, Request, Scope, Stage, StageOutput,
+    Committer, OcrModel, Pipeline, PipelineConfig, Progress, Request, Scope, Stage, StageOutput,
 };
 use koharu_scene::{Authored, Session, SourceText, Translation};
 use koharu_translator::ProvidersConfig;
+
+mod escenas;
+mod estudio;
+mod obra;
+mod revision;
 
 #[derive(Debug, Parser)]
 #[command(name = "khr", version, about = "Headless tooling for Koharu projects")]
@@ -154,6 +159,193 @@ enum Command {
         /// Force CPU execution.
         #[arg(long)]
         cpu: bool,
+
+        /// Translate with this LM Studio model instead of the configured provider.
+        #[arg(long, value_name = "MODEL")]
+        translator: Option<String>,
+
+        /// LM Studio server used by --translator.
+        #[arg(long, default_value = "http://localhost:1234")]
+        base_url: String,
+
+        /// Send each page's image with its text; --translator must see images.
+        #[arg(long)]
+        vision: bool,
+
+        /// Leave out the page study (paginas.json), to measure what it adds.
+        #[arg(long)]
+        without_pages: bool,
+
+        /// Source language (ja, ko, zh, en): picks the OCR that reads it best.
+        #[arg(long, value_name = "IDIOMA")]
+        idioma: Option<String>,
+
+        /// OCR model to use, overriding the one --idioma or the settings pick.
+        #[arg(long, value_name = "MODELO")]
+        ocr: Option<String>,
+    },
+
+    /// Remove everything detection wrote on the pages (regions, text, layers),
+    /// so detection can run again with other settings. Only for test copies:
+    /// OCR, translations and hand edits on those pages go with it.
+    Limpiar {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+
+        /// Only the first N pages.
+        #[arg(long, value_name = "N")]
+        pages: Option<usize>,
+    },
+
+    /// Propose grammar, person and meaning corrections without applying them
+    /// (obras/<obra>/correcciones.tsv, approved in the panel).
+    Revisar {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+
+        /// Base URL of the OpenAI-compatible server hosting the model.
+        #[arg(long, default_value = "http://localhost:1234")]
+        base_url: String,
+
+        /// Model identifier, as the server reports it.
+        #[arg(long)]
+        model: String,
+
+        /// Only the first N pages.
+        #[arg(long, value_name = "N")]
+        pages: Option<usize>,
+
+        /// Read balloons left to right; manga and manhwa read the other way.
+        #[arg(long)]
+        left_to_right: bool,
+    },
+
+    /// Write the corrections approved in the panel into the project.
+    Aplicar {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+    },
+
+    /// Render the finished pages (inpainted, with the translation typeset) as PNG.
+    Exportar {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+
+        /// Folder for the PNG files.
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+
+        /// Only the first N pages.
+        #[arg(long, value_name = "N")]
+        pages: Option<usize>,
+    },
+
+    /// Print the regions detection found on one page, as JSON, to draw them.
+    Regiones {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+
+        /// Page number, from 1.
+        #[arg(long)]
+        page: usize,
+    },
+
+    /// Read the whole work and write its notes (characters, tone) and term proposals.
+    Estudiar {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+
+        /// Base URL of the OpenAI-compatible server hosting the model.
+        #[arg(long, default_value = "http://localhost:1234")]
+        base_url: String,
+
+        /// Model identifier, as the server reports it.
+        #[arg(long)]
+        model: String,
+
+        /// Read balloons left to right; manga and manhwa read the other way.
+        #[arg(long)]
+        left_to_right: bool,
+
+        /// Study page by page instead: what happens and who says each balloon.
+        #[arg(long)]
+        paginas: bool,
+
+        /// Show the model the pages too; it must see images. Without
+        /// --paginas they go four to a part, scaled down.
+        #[arg(long)]
+        vision: bool,
+
+        /// With --paginas, only the first N pages.
+        #[arg(long, value_name = "N")]
+        pages: Option<usize>,
+
+        /// Let the model think before writing the notes (slower).
+        #[arg(long)]
+        pensar: bool,
+    },
+
+    /// Propose glossary terms from the translations edited by hand.
+    Aprender {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+
+        #[arg(long, default_value = "http://localhost:1234")]
+        base_url: String,
+
+        #[arg(long)]
+        model: String,
+    },
+
+    /// Score a translator on ambiguous lines that only their scene resolves.
+    Escenas {
+        /// deepl or lm-studio.
+        #[arg(long, default_value = "lm-studio")]
+        provider: String,
+
+        /// LM Studio model identifier; ignored for DeepL.
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Leave out the work notes and glossary, to measure what they add.
+        #[arg(long)]
+        without_notes: bool,
+
+        /// Case file; the bundled one when omitted.
+        #[arg(long, value_name = "FILE")]
+        cases: Option<PathBuf>,
+
+        /// Repeat to measure how stable the translator is.
+        #[arg(long, default_value_t = 1)]
+        runs: usize,
+
+        /// Pass each translated scene through this LM Studio model, as `khr post` does.
+        #[arg(long, value_name = "MODEL")]
+        corrector: Option<String>,
+
+        /// Correction instructions used with --corrector.
+        #[arg(long, default_value = r"I:\Koharu\prompts\05-postproceso.txt")]
+        corrector_prompt: PathBuf,
+
+        /// Folder with the per-language translation prompts (01-ingles.txt ...).
+        #[arg(long, default_value = r"I:\Koharu\prompts")]
+        prompts: PathBuf,
+
+        /// LM Studio server for the local translator and the corrector.
+        #[arg(long, default_value = "http://localhost:1234")]
+        base_url: String,
+
+        /// Only the cases in this source language: en, ja, ko or zh.
+        #[arg(long)]
+        idioma: Option<String>,
+
+        /// Append one row per language to this TSV file.
+        #[arg(long, value_name = "FILE")]
+        resultados: Option<PathBuf>,
+
+        /// Name of the comparison the rows belong to.
+        #[arg(long)]
+        etiqueta: Option<String>,
     },
 }
 
@@ -263,7 +455,181 @@ async fn initialize_with_retry() {
     }
 }
 
-async fn run(project: &PathBuf, stages: &str, limit: Option<usize>, cpu: bool) -> Result<()> {
+async fn export(
+    project: &std::path::Path,
+    out: &std::path::Path,
+    limit: Option<usize>,
+) -> Result<()> {
+    let session = Session::open(project)
+        .await
+        .with_context(|| format!("failed to open {}", project.display()))?;
+    let snapshot = session.snapshot();
+    let renderer = koharu_renderer::Renderer::from_config(koharu_renderer::TypesettingConfig::load()?)?;
+    let rasterizer = koharu_rasterizer::Rasterizer::new()?;
+    std::fs::create_dir_all(out)?;
+    let pages: Vec<_> = snapshot.pages().map(|page| page.id()).collect();
+    let count = limit.unwrap_or(pages.len()).min(pages.len());
+    for (index, page) in pages.iter().take(count).enumerate() {
+        let frame = renderer.render(&snapshot, *page).await?;
+        let image = rasterizer
+            .rasterize(&frame.raster_frame()?, koharu_rasterizer::RasterOptions::default())?
+            .image;
+        let path = out.join(format!("{:03}.png", index + 1));
+        image.save(&path)?;
+        eprintln!("  {}", path.display());
+    }
+    Ok(())
+}
+
+async fn regions(project: &std::path::Path, page: usize) -> Result<()> {
+    let session = Session::open(project)
+        .await
+        .with_context(|| format!("failed to open {}", project.display()))?;
+    let snapshot = session.snapshot();
+    let pages: Vec<_> = snapshot.pages().map(|page| page.id()).collect();
+    let id = *pages
+        .get(page.checked_sub(1).context("pages count from 1")?)
+        .context("no such page")?;
+    let mut found = Vec::new();
+    for entity in snapshot.descendants(id)? {
+        let Some(region) = entity.component::<koharu_scene::Region>()? else {
+            continue;
+        };
+        let Some(geometry) = entity.component::<koharu_scene::Geometry>()? else {
+            continue;
+        };
+        let score = entity
+            .component::<koharu_scene::DetectionAnalysis>()?
+            .and_then(|analysis| analysis.labels.first().map(|label| label.confidence));
+        found.push(serde_json::json!({
+            "label": region.label,
+            "score": score,
+            "points": geometry.points.iter().map(|p| [p.x, p.y]).collect::<Vec<_>>(),
+        }));
+    }
+    println!("{}", serde_json::to_string(&found)?);
+    Ok(())
+}
+
+async fn clean(project: &std::path::Path, limit: Option<usize>) -> Result<()> {
+    let mut session = Session::open(project)
+        .await
+        .with_context(|| format!("failed to open {}", project.display()))?;
+    let snapshot = session.snapshot();
+    let pages: Vec<_> = snapshot.pages().map(|page| page.id()).collect();
+    let count = limit.unwrap_or(pages.len()).min(pages.len());
+    let mut removed = 0;
+    let patch = snapshot.patch(|edit| {
+        for page in pages.iter().take(count) {
+            for child in snapshot.children(*page)?.collect::<Vec<_>>() {
+                // The page's text group must stay; what detection wrote into
+                // it goes.
+                let targets: Vec<_> = if snapshot
+                    .entity(child)?
+                    .component::<koharu_scene::TextGroup>()?
+                    .is_some()
+                {
+                    snapshot.children(child)?.collect()
+                } else {
+                    vec![child]
+                };
+                for target in targets {
+                    edit.remove_entity(target, koharu_scene::RemovePolicy::Cascade)?;
+                    removed += 1;
+                }
+            }
+        }
+        Ok(())
+    })?;
+    session.commit(patch).await?;
+    eprintln!("removed {removed} item(s) from {count} page(s)");
+    Ok(())
+}
+
+/// OCR per source language, from reading Sakurami in all four languages with
+/// every engine (registros/ocr, 25-sep-2026). Baberu fixes the Japanese
+/// misreadings that change the meaning (ハニー, 避妊); Hayai gets hangul right
+/// where PaddleOCR-VL garbles it, though it drops the spaces; PaddleOCR-VL
+/// stays best for Chinese (Baberu reverses columns) and English (Baberu cuts
+/// long lines).
+fn ocr_for_language(idioma: &str) -> Result<OcrModel> {
+    Ok(match idioma.to_ascii_lowercase().as_str() {
+        "ja" => OcrModel::BaberuOcr,
+        "ko" => OcrModel::HayaiOcr,
+        "zh" | "en" => OcrModel::PaddleOcrVl1_6,
+        other => anyhow::bail!("unknown language `{other}`; expected ja, ko, zh or en"),
+    })
+}
+
+fn parse_ocr(model: &str) -> Result<OcrModel> {
+    Ok(match model {
+        "paddleocr-vl-1.6" => OcrModel::PaddleOcrVl1_6,
+        "manga-ocr" => OcrModel::MangaOcr,
+        "baberu-ocr" => OcrModel::BaberuOcr,
+        "hayai-ocr" => OcrModel::HayaiOcr,
+        other => anyhow::bail!(
+            "unknown OCR `{other}`; expected paddleocr-vl-1.6, manga-ocr, baberu-ocr or hayai-ocr"
+        ),
+    })
+}
+
+/// The shared configuration with this project's notes and glossary applied,
+/// and the translator swapped for an LM Studio model when one is given.
+fn pipeline_config(
+    project: &std::path::Path,
+    translator: Option<&str>,
+    base_url: &str,
+    vision: bool,
+    with_pages: bool,
+) -> Result<(PipelineConfig, ProvidersConfig)> {
+    let mut pipeline = koharu_config::load::<PipelineConfig>("pipeline")?.read()?.clone();
+    let mut providers = koharu_config::load::<ProvidersConfig>("providers")?.read()?.clone();
+    let work = obra::Work::of(project);
+    pipeline.translation.work_notes = work.notes();
+    pipeline.translation.glossary = work.glossary()?;
+    if with_pages {
+        pipeline.translation.page_notes = work.page_context();
+    }
+    if let Some(model) = translator {
+        pipeline.translation.model = koharu_translator::ModelSelection {
+            provider: koharu_translator::Provider::LmStudio,
+            model: Some(model.to_owned()),
+            quantization: None,
+            vision,
+            // Marks the model as one whose thinking can be switched; without
+            // it the "off" below is dropped and never reaches LM Studio.
+            reasoning: true,
+        };
+        providers.lm_studio.base_url = Some(base_url.parse().context("invalid --base-url")?);
+    }
+    // Koharu attaches the page image only when the generation settings ask
+    // for it, whatever the model can do.
+    pipeline.translation.generation.vision = Some(vision);
+    // Left unset, reasoning_effort is omitted and Gemma 4 thinks until it
+    // spends the whole max_tokens, returning an empty translation.
+    if translator.is_some() {
+        pipeline.translation.generation.reasoning = Some(false);
+    }
+    Ok((pipeline, providers))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run(
+    project: &PathBuf,
+    stages: &str,
+    limit: Option<usize>,
+    cpu: bool,
+    translator: Option<String>,
+    base_url: &str,
+    vision: bool,
+    with_pages: bool,
+    ocr: Option<OcrModel>,
+    text_detector: bool,
+) -> Result<()> {
+    anyhow::ensure!(
+        !vision || translator.is_some(),
+        "--vision needs --translator with a model that sees images"
+    );
     let stages = parse_stages(stages)?;
     anyhow::ensure!(!stages.is_empty(), "no stages selected");
 
@@ -296,9 +662,35 @@ async fn run(project: &PathBuf, stages: &str, limit: Option<usize>, cpu: bool) -
         // Load the same configuration the desktop application reads, so stages
         // run with the selected models, prompts and provider credentials
         // instead of defaults.
+        let (mut pipeline_settings, providers) =
+            pipeline_config(project, translator.as_deref(), base_url, vision, with_pages)?;
+        if let Some(ocr) = &ocr {
+            pipeline_settings.ocr = ocr.clone();
+        }
+        if text_detector {
+            // The pipeline reads the model's settings from its processor
+            // profile, falling back to the active selection.
+            let koharu_pipeline::DetectionModel::KoharuLayoutRFDetrSeg2XL(selected) =
+                &pipeline_settings.detection;
+            let profile = pipeline_settings
+                .processor
+                .koharu_layout_rfdetr_seg_2xl
+                .get_or_insert_with(|| selected.clone());
+            profile.comic_text_detector = Some(true);
+        }
+        if stage == Stage::Translation {
+            let notes = pipeline_settings.translation.work_notes.is_some();
+            let terms = pipeline_settings.translation.glossary.entries.len();
+            let studied = pipeline_settings.translation.page_notes.len();
+            eprintln!(
+                "translation context: {} notes, {terms} glossary term(s), {studied} studied page(s), {}",
+                if notes { "with" } else { "without" },
+                if vision { "with page images" } else { "text only" }
+            );
+        }
         let pipeline = Pipeline::from_config(
-            koharu_config::load::<PipelineConfig>("pipeline")?,
-            koharu_config::load::<ProvidersConfig>("providers")?,
+            koharu_config::Config::memory(pipeline_settings),
+            koharu_config::Config::memory(providers),
             koharu_ml::device(cpu),
         )?;
         let snapshot = session.snapshot();
@@ -320,6 +712,9 @@ async fn run(project: &PathBuf, stages: &str, limit: Option<usize>, cpu: bool) -
             )
             .await?;
         drop(pipeline);
+        if stage == Stage::Translation {
+            estudio::record_machine(project, &session.snapshot(), &BTreeMap::new())?;
+        }
         eprintln!(
             "{stage}: {} page(s) in {:.2}s (model released)",
             pages.len(),
@@ -343,7 +738,102 @@ async fn main() -> Result<()> {
             stages,
             pages,
             cpu,
-        } => run(&project, &stages, pages, cpu).await,
+            translator,
+            base_url,
+            vision,
+            without_pages,
+            idioma,
+            ocr,
+        } => {
+            // Whole-balloon text blocks (comic-text-and-bubble-detector);
+            // it found every balloon of the test page in all four languages.
+            let text_detector = idioma.is_some();
+            let ocr = match (ocr, idioma) {
+                (Some(model), _) => Some(parse_ocr(&model)?),
+                (None, Some(idioma)) => Some(ocr_for_language(&idioma)?),
+                (None, None) => None,
+            };
+            run(
+                &project,
+                &stages,
+                pages,
+                cpu,
+                translator,
+                &base_url,
+                vision,
+                !without_pages,
+                ocr,
+                text_detector,
+            )
+            .await
+        }
+        Command::Limpiar { project, pages } => clean(&project, pages).await,
+        Command::Regiones { project, page } => regions(&project, page).await,
+        Command::Revisar {
+            project,
+            base_url,
+            model,
+            pages,
+            left_to_right,
+        } => revision::review(&project, &base_url, &model, !left_to_right, pages).await,
+        Command::Aplicar { project } => revision::apply(&project).await,
+        Command::Exportar {
+            project,
+            out,
+            pages,
+        } => export(&project, &out, pages).await,
+        Command::Estudiar {
+            project,
+            base_url,
+            model,
+            left_to_right,
+            paginas,
+            vision,
+            pages,
+            pensar,
+        } => {
+            if paginas {
+                estudio::study_pages(&project, &base_url, &model, !left_to_right, vision, pages)
+                    .await
+            } else {
+                estudio::study(&project, &base_url, &model, !left_to_right, vision, pensar).await
+            }
+        }
+        Command::Aprender {
+            project,
+            base_url,
+            model,
+        } => estudio::learn(&project, &base_url, &model).await,
+        Command::Escenas {
+            provider,
+            model,
+            without_notes,
+            cases,
+            runs,
+            corrector,
+            corrector_prompt,
+            prompts,
+            base_url,
+            idioma,
+            resultados,
+            etiqueta,
+        } => {
+            escenas::run(escenas::Options {
+                provider,
+                model,
+                without_notes,
+                cases,
+                runs,
+                corrector,
+                corrector_prompt,
+                prompts,
+                base_url,
+                idioma,
+                resultados,
+                etiqueta,
+            })
+            .await
+        }
         Command::Post {
             project,
             pages,
@@ -564,6 +1054,8 @@ struct ChatRequest<'a> {
     messages: Vec<ChatMessage<'a>>,
     temperature: f32,
     stream: bool,
+    /// Always "none": Gemma 4 otherwise spends most of its reply thinking.
+    reasoning_effort: &'static str,
     response_format: serde_json::Value,
 }
 
@@ -680,6 +1172,14 @@ async fn post(
     let instructions = std::fs::read_to_string(&instructions)
         .with_context(|| format!("failed to read {}", instructions.display()))?;
     let system = format!("{}{FORMAT_APPENDIX}", instructions.trim());
+    let work = obra::Work::of(project);
+    let notes = work.notes();
+    let glossary = work.glossary()?;
+    eprintln!(
+        "correction context: {} notes, {} glossary term(s)",
+        if notes.is_some() { "with" } else { "without" },
+        glossary.entries.len()
+    );
 
     let mut session = Session::open(project)
         .await
@@ -775,19 +1275,24 @@ async fn post(
     // Batches never span pages: the context that disambiguates a balloon is its
     // own scene, and padding a request with neighbouring pages dilutes it. A
     // page longer than the batch is split, but two pages never share a request.
-    let batches: Vec<Vec<_>> = by_page
-        .into_values()
-        .flat_map(|blocks| {
+    let page_at: Vec<_> = snapshot.pages().map(|page| page.id()).collect();
+    let batches: Vec<(koharu_scene::EntityId, Vec<_>)> = by_page
+        .into_iter()
+        .flat_map(|(index, blocks)| {
             blocks
                 .into_iter()
                 .map(|(_, id, source, t)| (id, source, t))
                 .collect::<Vec<_>>()
                 .chunks(batch)
-                .map(<[_]>::to_vec)
+                .map(|chunk| (page_at[index], chunk.to_vec()))
                 .collect::<Vec<_>>()
         })
         .collect();
-    let pending: Vec<_> = batches.iter().flatten().cloned().collect();
+    let pending: Vec<_> = batches.iter().flat_map(|(_, chunk)| chunk).cloned().collect();
+    let page_context = work.page_context();
+    if !page_context.is_empty() {
+        eprintln!("{} studied page(s) in context", page_context.len());
+    }
 
     if pending.is_empty() {
         eprintln!("nothing to correct: no entity carries both a source text and a translation");
@@ -803,7 +1308,7 @@ async fn post(
 
     let mut accepted = Vec::new();
     let mut rejected = 0_usize;
-    for (index, chunk) in batches.iter().enumerate() {
+    for (index, (page, chunk)) in batches.iter().enumerate() {
         let payload = serde_json::json!({
             "bloques": chunk
                 .iter()
@@ -816,12 +1321,30 @@ async fn post(
                 .collect::<Vec<_>>(),
         });
         let user = serde_json::to_string(&payload)?;
+        // The notes and the terms found in this batch go in the system message,
+        // beside the editorial rules, never inside the text being edited.
+        let sources: Vec<&str> = chunk.iter().map(|(_, source, _)| source.as_str()).collect();
+        let context = [
+            koharu_translator::glossary::instructions_block(notes.as_deref(), &glossary, &sources),
+            koharu_translator::glossary::page_block(
+                page_context.get(&page.to_string()).map(String::as_str),
+            ),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+        let batch_system = if context.is_empty() {
+            system.clone()
+        } else {
+            format!("{system}\n\n{context}")
+        };
         let request = ChatRequest {
             model,
             messages: vec![
                 ChatMessage {
                     role: "system",
-                    content: &system,
+                    content: &batch_system,
                 },
                 ChatMessage {
                     role: "user",
@@ -830,6 +1353,7 @@ async fn post(
             ],
             temperature: 0.2,
             stream: false,
+            reasoning_effort: "none",
             response_format: correction_schema(),
         };
 
@@ -916,6 +1440,12 @@ async fn post(
         Ok(())
     })?;
     session.commit(patch).await?;
+    let written: BTreeMap<_, _> = accepted
+        .iter()
+        .filter(|(_, previous, _)| !matches!(previous.text.origin, koharu_scene::Origin::User))
+        .map(|(id, _, candidate)| (*id, candidate.clone()))
+        .collect();
+    estudio::record_machine(project, &session.snapshot(), &written)?;
     eprintln!(
         "wrote {} correction(s) to {}",
         accepted.len(),
@@ -1097,6 +1627,9 @@ async fn models(action: ModelsAction) -> Result<()> {
         }
         ModelsAction::Load { model, context } => {
             let context = context.unwrap_or(8192).to_string();
+            // A loaded model is useless to `khr post` or `khr escenas` while
+            // the server is down, which LM Studio leaves it after a restart.
+            run_lms(&["server", "start"])?;
             eprintln!("loading {model}...");
             let raw = run_lms(&[
                 "load",
@@ -1481,6 +2014,7 @@ async fn ask_model(
         ],
         temperature: 0.2,
         stream: false,
+        reasoning_effort: "none",
         response_format: correction_schema(),
     };
     let response: ChatResponse = client

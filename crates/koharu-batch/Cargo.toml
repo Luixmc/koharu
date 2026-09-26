@@ -18,10 +18,14 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+base64 = { workspace = true }
 clap = { workspace = true }
+image = { workspace = true }
 koharu-config = { workspace = true }
 koharu-ml = { workspace = true }
 koharu-pipeline = { workspace = true }
+koharu-rasterizer = { workspace = true }
+koharu-renderer = { workspace = true }
 koharu-scene = { workspace = true }
 futures = { workspace = true }
 koharu-translator = { workspace = true }
