@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use eframe::egui;
 
@@ -67,9 +67,49 @@ struct Step {
     after: After,
 }
 
+impl Step {
+    /// The project a planned step belongs to, from its "[name] step" label.
+    fn project(&self) -> Option<&str> {
+        self.name.strip_prefix('[')?.split_once("] ").map(|(name, _)| name)
+    }
+}
+
 enum Event {
     Output(String),
     Exited(Option<i32>),
+}
+
+/// How far the running step has got, from khr's `@progreso` lines.
+struct StepProgress {
+    what: String,
+    done: usize,
+    total: usize,
+    /// When the count first went up, and to what; the pace since then
+    /// estimates the time left, so loading the model before the first unit
+    /// does not skew it.
+    first: Option<(Instant, usize)>,
+}
+
+impl StepProgress {
+    fn fraction(&self) -> f32 {
+        if self.total == 0 { 0.0 } else { (self.done as f32 / self.total as f32).min(1.0) }
+    }
+
+    fn remaining(&self) -> Option<Duration> {
+        let (since, start) = self.first?;
+        let measured = self.done.checked_sub(start).filter(|&units| units > 0)?;
+        let left = self.total.saturating_sub(self.done);
+        Some(since.elapsed().mul_f64(left as f64 / measured as f64))
+    }
+}
+
+fn short_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    match seconds {
+        0..60 => format!("{seconds} s"),
+        60..3600 => format!("{} min {:02} s", seconds / 60, seconds % 60),
+        _ => format!("{} h {:02} min", seconds / 3600, seconds % 3600 / 60),
+    }
 }
 
 struct Panel {
@@ -80,6 +120,10 @@ struct Panel {
     selected: Option<usize>,
     stages: [bool; 3],
     study: bool,
+    /// The user's tags (comma separated) and description of the work, given
+    /// to `khr estudiar` as a starting point it compares with the text.
+    tags: String,
+    description: String,
     translate: bool,
     review_step: bool,
     llm_translation: bool,
@@ -90,6 +134,9 @@ struct Panel {
     queue: VecDeque<Step>,
     queued_projects: Vec<String>,
     current: Option<Step>,
+    /// When the running step started, and its progress if khr reports any.
+    step_started: Instant,
+    progress: Option<StepProgress>,
     failed: bool,
     child: Arc<Mutex<Option<Child>>>,
     events: (Sender<Event>, Receiver<Event>),
@@ -127,6 +174,8 @@ impl Panel {
             selected: None,
             stages: [true; 3],
             study: true,
+            tags: String::new(),
+            description: String::new(),
             translate: true,
             review_step: true,
             llm_translation: true,
@@ -137,6 +186,8 @@ impl Panel {
             queue: VecDeque::new(),
             queued_projects: Vec::new(),
             current: None,
+            step_started: Instant::now(),
+            progress: None,
             failed: false,
             child: Arc::new(Mutex::new(None)),
             events: channel(),
@@ -183,6 +234,7 @@ impl Panel {
         self.new_term = None;
         self.load_glossary();
         self.load_corrections();
+        self.load_user_notes();
         self.status = self
             .project()
             .and_then(Path::file_stem)
@@ -306,6 +358,63 @@ impl Panel {
             ctx.request_repaint();
         });
         self.current = Some(step);
+        self.step_started = Instant::now();
+        self.progress = None;
+    }
+
+    /// Projects in the queue, in order, that have not started yet.
+    fn waiting_projects(&self) -> Vec<String> {
+        let running = self.current.as_ref().and_then(Step::project);
+        let mut waiting: Vec<String> = Vec::new();
+        for name in self.queue.iter().filter_map(Step::project) {
+            if Some(name) != running && !waiting.iter().any(|seen| seen == name) {
+                waiting.push(name.to_owned());
+            }
+        }
+        waiting
+    }
+
+    /// Drops every pending step of a project that has not started.
+    fn cancel_queued(&mut self, name: &str) {
+        self.queue.retain(|step| step.project() != Some(name));
+        self.queued_projects.retain(|queued| queued != name);
+        self.log(format!("--- {name}: quitado de la cola ---"));
+        self.status = format!("Quitado de la cola: {name}");
+    }
+
+    /// Takes a `@progreso <done> <total> <what>` line; returns false for any
+    /// other line, which belongs in the log.
+    fn read_progress(&mut self, line: &str) -> bool {
+        let Some(rest) = line.trim().strip_prefix("@progreso ") else { return false };
+        let mut parts = rest.splitn(3, ' ');
+        let (Some(Ok(done)), Some(Ok(total))) = (
+            parts.next().map(str::parse::<usize>),
+            parts.next().map(str::parse::<usize>),
+        ) else {
+            return false;
+        };
+        let what = parts.next().unwrap_or_default().trim().to_owned();
+        let now = Instant::now();
+        match &mut self.progress {
+            // A new label (the next stage of a run) or a count that went back
+            // starts the estimate over.
+            Some(progress) if progress.what == what && done >= progress.done => {
+                if progress.first.is_none() && done > progress.done {
+                    progress.first = Some((now, done));
+                }
+                progress.done = done;
+                progress.total = total;
+            }
+            _ => {
+                self.progress = Some(StepProgress {
+                    what,
+                    done,
+                    total,
+                    first: None,
+                });
+            }
+        }
+        true
     }
 
     fn drain_events(&mut self, ctx: &egui::Context) {
@@ -317,7 +426,7 @@ impl Panel {
                     while let Some(end) = self.partial.find(['\n', '\r']) {
                         let line: String = self.partial.drain(..=end).collect();
                         let line = line.trim_end_matches(['\n', '\r']);
-                        if !line.is_empty() {
+                        if !line.is_empty() && !self.read_progress(line) {
                             self.log(line.to_owned());
                         }
                     }
@@ -327,6 +436,7 @@ impl Panel {
                         let rest = std::mem::take(&mut self.partial);
                         self.log(rest);
                     }
+                    self.progress = None;
                     let Some(step) = self.current.take() else { continue };
                     if code != Some(0) && !step.ignore_error {
                         let shown = code.map_or("detenido".to_owned(), |c| format!("código {c}"));
@@ -443,6 +553,9 @@ impl Panel {
             self.push(&label(&format!("Cargar {model}")), &khr, &["models", "load", &model], false, After::Nothing);
         }
         if self.study {
+            if let Err(error) = self.save_user_notes() {
+                self.log(format!("No se guardaron tus etiquetas y descripción: {error}"));
+            }
             let mut args = vec!["estudiar", "--project", &project_arg, "--model", &model];
             if self.left_to_right {
                 args.push("--left-to-right");
@@ -519,6 +632,44 @@ impl Panel {
     fn work_dir(&self) -> Option<PathBuf> {
         self.project()
             .map(|project| Path::new(WORKS_DIR).join(log_base(project)))
+    }
+
+    fn load_user_notes(&mut self) {
+        let notes = self
+            .work_dir()
+            .and_then(|dir| std::fs::read_to_string(dir.join("usuario.json")).ok())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .unwrap_or_default();
+        self.tags = notes["etiquetas"]
+            .as_array()
+            .map(|tags| tags.iter().filter_map(|tag| tag.as_str()).collect::<Vec<_>>().join(", "))
+            .unwrap_or_default();
+        self.description = notes["descripcion"].as_str().unwrap_or_default().to_owned();
+    }
+
+    /// Writes the tags and description for `khr estudiar`; empty fields
+    /// remove the file so the study starts from the text alone.
+    fn save_user_notes(&self) -> std::io::Result<()> {
+        let Some(dir) = self.work_dir() else { return Ok(()) };
+        let path = dir.join("usuario.json");
+        let tags: Vec<&str> = self
+            .tags
+            .split([',', ';', '\n'])
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .collect();
+        if tags.is_empty() && self.description.trim().is_empty() {
+            return match std::fs::remove_file(&path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+                _ => Ok(()),
+            };
+        }
+        std::fs::create_dir_all(&dir)?;
+        let notes = serde_json::json!({
+            "etiquetas": tags,
+            "descripcion": self.description.trim(),
+        });
+        std::fs::write(path, serde_json::to_string_pretty(&notes).unwrap_or_default())
     }
 
     fn load_glossary(&mut self) {
@@ -1002,6 +1153,22 @@ impl eframe::App for Panel {
                         cols[0].checkbox(on, *label);
                     }
                     cols[0].checkbox(&mut self.study, "4. Estudiar la obra (ficha y términos)");
+                    if self.study {
+                        cols[0].indent("user_notes", |ui| {
+                            ui.label("Antes de la ficha (opcional); la IA lo compara con lo que lee:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.tags)
+                                    .hint_text("Etiquetas, separadas por comas")
+                                    .desired_width(f32::INFINITY),
+                            );
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.description)
+                                    .hint_text("Descripción breve: de qué va, quién es quién, tono")
+                                    .desired_rows(3)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
+                    }
                     cols[0].checkbox(&mut self.translate, "5. Traducir");
                     cols[0].checkbox(
                         &mut self.review_step,
@@ -1098,6 +1265,42 @@ impl eframe::App for Panel {
                 }
                 ui.label(&self.status);
             });
+            let waiting = self.waiting_projects();
+            if !waiting.is_empty() {
+                let mut cancel = None;
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("En cola:");
+                    for name in &waiting {
+                        ui.label(name);
+                        if ui.small_button("×").on_hover_text("Quitar de la cola").clicked() {
+                            cancel = Some(name.clone());
+                        }
+                    }
+                });
+                if let Some(name) = cancel {
+                    self.cancel_queued(&name);
+                }
+            }
+            if busy {
+                let elapsed = short_duration(self.step_started.elapsed());
+                match &self.progress {
+                    Some(progress) => {
+                        let left = match progress.remaining() {
+                            Some(left) => format!("quedan ~{}", short_duration(left)),
+                            None => "calculando el tiempo...".to_owned(),
+                        };
+                        ui.add(egui::ProgressBar::new(progress.fraction()).text(format!(
+                            "{}: {} de {} · {elapsed} transcurridos · {left}",
+                            progress.what, progress.done, progress.total
+                        )));
+                    }
+                    None => {
+                        ui.label(format!("Paso en curso: {elapsed} transcurridos (sin avance medible)"));
+                    }
+                }
+                // Keep the clock moving between output lines.
+                ui.ctx().request_repaint_after(Duration::from_secs(1));
+            }
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
@@ -1273,4 +1476,39 @@ fn main() -> eframe::Result {
             Ok(Box::new(Panel::new()))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn step(name: &str) -> Step {
+        Step {
+            name: name.to_owned(),
+            program: PathBuf::new(),
+            args: Vec::new(),
+            ignore_error: false,
+            after: After::Nothing,
+        }
+    }
+
+    #[test]
+    fn planned_steps_name_their_project() {
+        assert_eq!(step("[Sakurami EN] 5. Traducir").project(), Some("Sakurami EN"));
+        assert_eq!(step("Liberar VRAM").project(), None);
+    }
+
+    #[test]
+    fn the_estimate_waits_for_measured_work() {
+        let mut progress = StepProgress { what: "ocr".to_owned(), done: 0, total: 10, first: None };
+        assert!(progress.remaining().is_none());
+        progress.first = Some((Instant::now() - Duration::from_secs(20), 2));
+        progress.done = 2;
+        assert!(progress.remaining().is_none());
+        progress.done = 4;
+        // Two pages in 20 s leaves six pages, about 60 s.
+        let left = progress.remaining().unwrap().as_secs();
+        assert!((59..=61).contains(&left), "{left}");
+        assert_eq!(short_duration(Duration::from_secs(125)), "2 min 05 s");
+    }
 }

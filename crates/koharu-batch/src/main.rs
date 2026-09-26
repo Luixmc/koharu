@@ -23,6 +23,14 @@ mod estudio;
 mod obra;
 mod revision;
 
+/// Reports how far a long step has got, as `@progreso <done> <total> <what>`
+/// on stderr. The panel turns these lines into a progress bar with an
+/// estimated time left and keeps them out of its log; in a terminal they
+/// read as plain counters.
+pub(crate) fn progress(done: usize, total: usize, what: &str) {
+    eprintln!("@progreso {done} {total} {what}");
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "khr", version, about = "Headless tooling for Koharu projects")]
 struct Cli {
@@ -695,15 +703,21 @@ async fn run(
         )?;
         let snapshot = session.snapshot();
         let mut committer = SessionCommitter(&mut session);
+        let page_count = pages.len();
+        let finished = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let label = format!("{stage}");
+        progress(0, page_count, &label);
         pipeline
             .execute(
                 snapshot,
                 Request {
                     operation: koharu_pipeline::Operation::Only { stage },
                     scope: Scope::Pages(pages.clone()),
-                    progress: Some(Arc::new(|event| {
+                    progress: Some(Arc::new(move |event| {
                         if let Progress::Finished { stage, elapsed, .. } = event {
                             eprintln!("  {stage} {:.2}s", elapsed.as_secs_f64());
+                            let done = finished.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                            progress(done.min(page_count), page_count, &label);
                         }
                     })),
                     ..Request::default()
@@ -1309,6 +1323,7 @@ async fn post(
     let mut accepted = Vec::new();
     let mut rejected = 0_usize;
     for (index, (page, chunk)) in batches.iter().enumerate() {
+        progress(index, batches.len(), "corrección");
         let payload = serde_json::json!({
             "bloques": chunk
                 .iter()
@@ -1774,6 +1789,12 @@ async fn download_model(id: &str) -> Result<()> {
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
             .context("failed to write the downloaded data")?;
+        // Every 64 MB crossed.
+        if let Some(total) = expected
+            && (written >> 26) != ((written - chunk.len() as u64) >> 26)
+        {
+            progress((written >> 20) as usize, (total >> 20) as usize, "descarga (MB)");
+        }
         if written - reported >= 512 * 1024 * 1024 {
             reported = written;
             match expected {

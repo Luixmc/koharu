@@ -12,6 +12,8 @@
 //!   later hand edit can be told apart from the machine's own output.
 //! - `paginas.json`: what happens on each page and who says each balloon,
 //!   written by `khr estudiar --paginas` and editable by hand.
+//! - `usuario.json`: tags and a short description the user writes before
+//!   studying; `khr estudiar` starts from them and compares them with the text.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -62,6 +64,10 @@ impl Work {
 
     fn rejected_path(&self) -> PathBuf {
         self.dir.join("rechazados.tsv")
+    }
+
+    pub fn user_notes_path(&self) -> PathBuf {
+        self.dir.join("usuario.json")
     }
 
     pub fn page_notes_path(&self) -> PathBuf {
@@ -133,6 +139,14 @@ impl Work {
         Ok(added)
     }
 
+    /// What the user said about the work, if anything.
+    pub fn user_notes(&self) -> Option<UserNotes> {
+        std::fs::read_to_string(self.user_notes_path())
+            .ok()
+            .and_then(|text| serde_json::from_str::<UserNotes>(&text).ok())
+            .filter(|notes| !notes.is_empty())
+    }
+
     pub fn page_notes(&self) -> Vec<PageNote> {
         std::fs::read_to_string(self.page_notes_path())
             .ok()
@@ -166,6 +180,21 @@ impl Work {
         self.ensure_dir()?;
         std::fs::write(self.baseline_path(), serde_json::to_string_pretty(baseline)?)
             .with_context(|| format!("failed to write {}", self.baseline_path().display()))
+    }
+}
+
+/// Tags and a short description the user gives before the work is studied.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct UserNotes {
+    #[serde(default)]
+    pub etiquetas: Vec<String>,
+    #[serde(default)]
+    pub descripcion: String,
+}
+
+impl UserNotes {
+    pub fn is_empty(&self) -> bool {
+        self.descripcion.trim().is_empty() && self.etiquetas.iter().all(|tag| tag.trim().is_empty())
     }
 }
 

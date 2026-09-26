@@ -17,7 +17,7 @@ use anyhow::{Context as _, Result};
 use koharu_scene::{EntityId, Origin, Session, Snapshot, SourceText, Translation};
 use koharu_translator::{Glossary, GlossaryEntry};
 
-use crate::obra::{BalloonNote, Machine, PageNote, Work};
+use crate::obra::{BalloonNote, Machine, PageNote, UserNotes, Work};
 use crate::{ChatMessage, ChatRequest, ChatResponse, extract_json, placement, sort_reading_order};
 
 /// Characters of source text sent per request while studying. The corrector
@@ -225,6 +225,10 @@ struct Notes {
     obra: Overview,
     personajes: Vec<Character>,
     terminos: Vec<Term>,
+    /// How the text agrees with the user's tags and description, and where
+    /// it does not.
+    #[serde(default)]
+    comparacion_usuario: String,
 }
 
 const STUDY_PROMPT: &str = "\
@@ -247,6 +251,13 @@ nombres propios, apodos, honoríficos (onii-chan, senpai), formas de llamarse \
 (\"big sis\"), jerga sexual recurrente y objetos importantes. Propón la traducción \
 al español latino neutro y una nota breve. No incluyas frases enteras ni palabras \
 comunes que no necesitan regla.
+
+- comparacion_usuario: si recibes datos_del_usuario (etiquetas y una descripción \
+que escribió quien conoce la obra), úsalos como punto de partida: suelen ser fiables \
+en género, tono y relaciones. Compáralos con lo que muestra el texto y escribe aquí, \
+en pocas líneas, en qué coinciden, qué les falta y qué contradice el texto (cita la \
+página). No cambies los datos del usuario; si el texto los contradice, la ficha sigue \
+al texto y lo dices aquí. Sin datos del usuario, déjalo vacío.
 
 Escribe todo en español. Si el texto trae ruido de OCR (letras sueltas, marcas de \
 agua), ignóralo.";
@@ -279,14 +290,15 @@ fn notes_schema() -> serde_json::Value {
                     "additionalProperties": false
                 }
             },
-            "terminos": terms_schema()
+            "terminos": terms_schema(),
+            "comparacion_usuario": {"type": "string"}
         },
-        "required": ["obra", "personajes", "terminos"],
+        "required": ["obra", "personajes", "terminos", "comparacion_usuario"],
         "additionalProperties": false
     })
 }
 
-fn render_notes(name: &str, notes: &Notes) -> String {
+fn render_notes(name: &str, notes: &Notes, user: Option<&UserNotes>) -> String {
     let mut text = format!(
         "# Ficha: {name}\n\n\
          <!-- Generada por khr estudiar. Edítala a mano: el traductor y el corrector la leen tal cual. -->\n\n\
@@ -303,6 +315,27 @@ fn render_notes(name: &str, notes: &Notes) -> String {
             character.relaciones.trim(),
             character.habla.trim()
         ));
+    }
+    if let Some(user) = user {
+        text.push_str("\n## Lo que dice el usuario\n");
+        let tags: Vec<&str> = user
+            .etiquetas
+            .iter()
+            .map(|tag| tag.trim())
+            .filter(|tag| !tag.is_empty())
+            .collect();
+        if !tags.is_empty() {
+            text.push_str(&format!("Etiquetas: {}\n", tags.join(", ")));
+        }
+        if !user.descripcion.trim().is_empty() {
+            text.push_str(&format!("Descripción: {}\n", user.descripcion.trim()));
+        }
+        if !notes.comparacion_usuario.trim().is_empty() {
+            text.push_str(&format!(
+                "Comparación con el texto: {}\n",
+                notes.comparacion_usuario.trim()
+            ));
+        }
     }
     text
 }
@@ -397,14 +430,27 @@ pub async fn study(
         if think { ", thinking" } else { "" }
     );
 
+    let work = Work::of(project);
+    let user_notes = work.user_notes();
+    if let Some(user) = &user_notes {
+        eprintln!(
+            "starting from the user's {} tag(s) and description",
+            user.etiquetas.len()
+        );
+    }
     let client = reqwest::Client::new();
     let endpoint = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
     let mut notes = Notes::default();
     for (index, (chunk, shown)) in chunks.iter().enumerate() {
-        let user = serde_json::to_string(&serde_json::json!({
+        crate::progress(index, chunks.len(), "estudio de la obra");
+        let mut message = serde_json::json!({
             "ficha_actual": notes,
             "texto": chunk,
-        }))?;
+        });
+        if let Some(user) = &user_notes {
+            message["datos_del_usuario"] = serde_json::to_value(user)?;
+        }
+        let user = serde_json::to_string(&message)?;
         let mut content = vec![serde_json::json!({"type": "text", "text": user})];
         if vision {
             for id in shown {
@@ -460,14 +506,13 @@ pub async fn study(
         }
     }
 
-    let work = Work::of(project);
     if let Some(previous) = work.notes() {
         let backup = work.notes_path().with_extension("anterior.md");
         std::fs::write(&backup, previous)?;
         eprintln!("previous notes kept in {}", backup.display());
     }
     let name = crate::obra::slug(project);
-    let rendered = render_notes(&name, &notes);
+    let rendered = render_notes(&name, &notes, user_notes.as_ref());
     work.write_notes(&rendered)?;
     println!("{rendered}");
     eprintln!("notes written to {}", work.notes_path().display());
@@ -616,6 +661,7 @@ pub async fn study_pages(
     let mut studied: Vec<PageNote> = Vec::new();
     let mut previous = String::new();
     for (index, (id, blocks)) in ids.iter().zip(&pages).take(count).enumerate() {
+        crate::progress(index, count, "estudio por páginas");
         if blocks.is_empty() {
             continue;
         }
@@ -844,4 +890,27 @@ pub async fn learn(project: &Path, base_url: &str, model: &str) -> Result<()> {
     }
     work.write_baseline(&baseline)?;
     record_machine(project, &snapshot, &BTreeMap::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_notes_quote_the_user_and_the_comparison() {
+        let notes = Notes {
+            comparacion_usuario: "Coincide; el texto muestra además a la vecina (p. 3).".to_owned(),
+            ..Notes::default()
+        };
+        let user = UserNotes {
+            etiquetas: vec!["romance".to_owned(), " ".to_owned(), "oficina".to_owned()],
+            descripcion: "Pareja casada que quiere un hijo.".to_owned(),
+        };
+        let text = render_notes("obra", &notes, Some(&user));
+        assert!(text.contains("Etiquetas: romance, oficina
+"));
+        assert!(text.contains("Descripción: Pareja casada"));
+        assert!(text.contains("Comparación con el texto: Coincide"));
+        assert!(!render_notes("obra", &notes, None).contains("usuario"));
+    }
 }

@@ -146,6 +146,7 @@ pub async fn review(
     let endpoint = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
     let mut found = Vec::new();
     for (index, blocks) in pages.iter().take(count).enumerate() {
+        crate::progress(index, count, "revisión");
         let balloons: Vec<_> = blocks
             .iter()
             .filter_map(|block| Some((block, block.translation.as_ref()?)))
