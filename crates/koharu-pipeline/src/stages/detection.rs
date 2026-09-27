@@ -51,6 +51,10 @@ const MIN_MEASURED_STROKE_WIDTH: u8 = 2;
 const DIALOGUE_MASK_CONTAINMENT_THRESHOLD: f32 = 0.9;
 /// Shrinks an added bubble's box on each side, as a percentage of its size.
 const BUBBLE_INSET_PERCENT: i32 = 6;
+/// A layout-model bubble this much smaller than the text detector's balloon
+/// box only caught part of the balloon (often one or two columns of a tall
+/// one) and would squeeze the translation; the balloon box replaces it.
+const UNDERSIZED_BUBBLE_RATIO: f32 = 1.5;
 /// The comic-text-and-bubble-detector CLI default.
 const TEXT_DETECTOR_CONFIDENCE: f32 = 0.3;
 
@@ -243,6 +247,7 @@ fn replace_text_regions(
     let (width, height) = (output.image_width, output.image_height);
     let luma = image.to_luma8();
     let mut added: Vec<[f32; 4]> = Vec::new();
+    let mut undersized_bubbles: Vec<[f32; 4]> = Vec::new();
     let clamp_box = |xyxy: &[i32; 4]| {
         (
             xyxy[0].clamp(0, width as i32) as u32,
@@ -278,9 +283,14 @@ fn replace_text_regions(
         // bubble whose outline cuts through the text (spiky or joined
         // balloons) would be refused there, leaving the text boxed in its
         // columns, so such a bubble does not count as covering it.
-        let covered = output.detections.iter().any(|detection| {
-            detection.label == "bubble" && ink_inside(&detection.mask, &text_mask) >= 0.9
-        });
+        let covering = output
+            .detections
+            .iter()
+            .filter(|detection| {
+                detection.label == "bubble" && ink_inside(&detection.mask, &text_mask) >= 0.9
+            })
+            .map(|detection| detection.bbox)
+            .min_by(|a, b| box_area(a).total_cmp(&box_area(b)));
         output.detections.push(KoharuLayoutDetection {
             label_id: text_label,
             label: "text".to_owned(),
@@ -302,19 +312,37 @@ fn replace_text_regions(
             bubble[2] - inset_x,
             bubble[3] - inset_y,
         ]);
-        if covered || bx1 <= bx0 || by1 <= by0 {
+        if bx1 <= bx0 || by1 <= by0 {
             continue;
+        }
+        let new_box = [bx0 as f32, by0 as f32, bx1 as f32, by1 as f32];
+        let (bubble_width, bubble_height) = (bx1 - bx0, by1 - by0);
+        let pixels = rounded_mask(bubble_width, bubble_height);
+        if let Some(old) = covering {
+            let rounded = KoharuLayoutMask {
+                x: bx0,
+                y: by0,
+                width: bubble_width,
+                height: bubble_height,
+                pixels: pixels.clone(),
+            };
+            let undersized = box_area(&new_box) >= box_area(&old) * UNDERSIZED_BUBBLE_RATIO
+                && box_overlap(&old, &new_box) >= 0.8
+                && ink_inside(&rounded, &output.detections.last().unwrap().mask) >= 0.9;
+            if !undersized {
+                continue;
+            }
+            if !undersized_bubbles.contains(&old) {
+                undersized_bubbles.push(old);
+            }
         }
         // Two texts of a joined balloon come with the same bubble box; one
         // shared region lets the renderer split it between them instead of
         // stacking both over the whole balloon.
-        let new_box = [bx0 as f32, by0 as f32, bx1 as f32, by1 as f32];
         if added.iter().any(|other| box_overlap(other, &new_box) > 0.6) {
             continue;
         }
         added.push(new_box);
-        let (bubble_width, bubble_height) = (bx1 - bx0, by1 - by0);
-        let pixels = rounded_mask(bubble_width, bubble_height);
         let area = pixels.iter().filter(|value| **value != 0).count() as u32;
         output.detections.push(KoharuLayoutDetection {
             label_id: bubble_label,
@@ -331,6 +359,15 @@ fn replace_text_regions(
             },
         });
     }
+    // Linking picks the smallest bubble around a text, so the partial one
+    // has to go for the balloon box to be used.
+    output.detections.retain(|detection| {
+        detection.label != "bubble" || !undersized_bubbles.contains(&detection.bbox)
+    });
+}
+
+fn box_area(b: &[f32; 4]) -> f32 {
+    (b[2] - b[0]).max(0.0) * (b[3] - b[1]).max(0.0)
 }
 
 /// The strokes inside a text box, grown by a few pixels. The paper is
@@ -2100,6 +2137,7 @@ mod tests {
                 text_threshold: Some(15.0),
                 bubble_threshold: Some(f32::NAN),
                 panel_threshold: Some(0.55),
+                ..Default::default()
             }),
             koharu_ml::Device::cpu(),
         );

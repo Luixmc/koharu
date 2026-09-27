@@ -55,6 +55,13 @@ const MINIMUM_FONT_SIZE: f32 = 9.0;
 /// Text with no balloon used a fixed 24 px ceiling, a third of the balloon
 /// text on 6250 px scans (measured: ~84 px median there). Scale it with the
 /// page, keeping 24 px as the floor for small pages.
+/// Auto-fit may shrink text only down to this. A fixed 9 px let asides
+/// written small beside the art end up ~30 px on 6250 px scans, where balloon
+/// text is ~80 px; past this floor the text overflows its box instead.
+fn readable_minimum(page_height: u32) -> f32 {
+    (page_height as f32 / 160.0).max(MINIMUM_FONT_SIZE)
+}
+
 fn free_text_maximum(page_height: u32) -> f32 {
     (page_height as f32 / 80.0).max(24.0)
 }
@@ -816,7 +823,7 @@ impl Traversal<'_> {
                 .and_then(|value| value.font_style)
                 .map(Into::into),
             font_size: typography.as_ref().and_then(|value| value.size),
-            minimum_font_size: MINIMUM_FONT_SIZE,
+            minimum_font_size: readable_minimum(self.height),
             free_text_maximum: free_text_maximum(self.height),
             auto_fit: typography.as_ref().is_none_or(|value| value.auto_fit),
             alignment,

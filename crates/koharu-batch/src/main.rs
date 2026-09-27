@@ -193,6 +193,9 @@ enum Command {
         /// OCR model to use, overriding the one --idioma or the settings pick.
         #[arg(long, value_name = "MODELO")]
         ocr: Option<String>,
+        /// Only these pages, counted from 1 (e.g. 6,7,24).
+        #[arg(long, value_name = "N,N", value_delimiter = ',')]
+        solo: Vec<usize>,
     },
 
     /// Remove everything detection wrote on the pages (regions, text, layers),
@@ -205,6 +208,10 @@ enum Command {
         /// Only the first N pages.
         #[arg(long, value_name = "N")]
         pages: Option<usize>,
+
+        /// Only these pages, counted from 1 (e.g. 6,7,24).
+        #[arg(long, value_name = "N,N", value_delimiter = ',')]
+        solo: Vec<usize>,
     },
 
     /// Propose grammar, person and meaning corrections without applying them
@@ -263,6 +270,10 @@ enum Command {
         /// Also write medidas.tsv: font size and layout box of every text.
         #[arg(long)]
         medidas: bool,
+
+        /// Only these pages, counted from 1 (e.g. 6,7,24).
+        #[arg(long, value_name = "N,N", value_delimiter = ',')]
+        solo: Vec<usize>,
     },
 
     /// Print the regions detection found on one page, as JSON, to draw them.
@@ -496,19 +507,21 @@ async fn export(
     out: &std::path::Path,
     limit: Option<usize>,
     medidas: bool,
+    solo: &[usize],
 ) -> Result<()> {
     let session = Session::open(project)
         .await
         .with_context(|| format!("failed to open {}", project.display()))?;
     let snapshot = session.snapshot();
-    let mut report = String::from("pagina\tligado\tletra\tancho\talto\tchars\ttexto\n");
+    let mut report = String::from("pagina\tligado\tletra\tx\ty\tancho\talto\tchars\ttexto\n");
     let renderer = koharu_renderer::Renderer::from_config(koharu_renderer::TypesettingConfig::load()?)?;
     let rasterizer = koharu_rasterizer::Rasterizer::new()?;
     std::fs::create_dir_all(out)?;
-    let pages: Vec<_> = snapshot.pages().map(|page| page.id()).collect();
-    let count = limit.unwrap_or(pages.len()).min(pages.len());
-    for (index, page) in pages.iter().take(count).enumerate() {
-        let frame = renderer.render(&snapshot, *page).await?;
+    let all: Vec<_> = snapshot.pages().map(|page| page.id()).collect();
+    let pages = pick_pages(&all, limit, solo);
+    let count = pages.len();
+    for (done, (index, page)) in pages.into_iter().enumerate() {
+        let frame = renderer.render(&snapshot, page).await?;
         if medidas {
             for layer in frame.layers() {
                 let koharu_renderer::LayerKind::Text(text) = layer.kind() else {
@@ -529,9 +542,11 @@ async fn export(
                     "libre"
                 };
                 report.push_str(&format!(
-                    "{}\t{ligado}\t{:.1}\t{:.0}\t{:.0}\t{}\t{}\n",
+                    "{}\t{ligado}\t{:.1}\t{:.0}\t{:.0}\t{:.0}\t{:.0}\t{}\t{}\n",
                     index + 1,
                     text.font_size,
+                    layer.bounds().x,
+                    layer.bounds().y,
                     text.layout_bounds.width,
                     text.layout_bounds.height,
                     text.text.chars().count(),
@@ -549,7 +564,7 @@ async fn export(
         // page): a 200-page book ran the PC out of RAM.
         renderer.discard_retained_nodes();
         eprintln!("  {}", path.display());
-        progress(index + 1, count, "exportar");
+        progress(done + 1, count, "exportar");
     }
     if medidas {
         std::fs::write(out.join("medidas.tsv"), report)?;
@@ -587,13 +602,14 @@ async fn regions(project: &std::path::Path, page: usize) -> Result<()> {
     Ok(())
 }
 
-async fn clean(project: &std::path::Path, limit: Option<usize>) -> Result<()> {
+async fn clean(project: &std::path::Path, limit: Option<usize>, solo: &[usize]) -> Result<()> {
     let mut session = Session::open(project)
         .await
         .with_context(|| format!("failed to open {}", project.display()))?;
     let snapshot = session.snapshot();
-    let pages: Vec<_> = snapshot.pages().map(|page| page.id()).collect();
-    let count = limit.unwrap_or(pages.len()).min(pages.len());
+    let all: Vec<_> = snapshot.pages().map(|page| page.id()).collect();
+    let pages: Vec<_> = pick_pages(&all, limit, solo).into_iter().map(|(_, page)| page).collect();
+    let count = pages.len();
     let mut removed = 0;
     let patch = snapshot.patch(|edit| {
         for page in pages.iter().take(count) {
@@ -620,6 +636,17 @@ async fn clean(project: &std::path::Path, limit: Option<usize>) -> Result<()> {
     session.commit(patch).await?;
     eprintln!("removed {removed} item(s) from {count} page(s)");
     Ok(())
+}
+
+/// The pages a command works on, with their index: `--solo` (counted from
+/// 1) if given, else the first `limit`, else all.
+fn pick_pages<T: Copy>(all: &[T], limit: Option<usize>, solo: &[usize]) -> Vec<(usize, T)> {
+    let picked = all.iter().copied().enumerate();
+    if solo.is_empty() {
+        picked.take(limit.unwrap_or(all.len())).collect()
+    } else {
+        picked.filter(|(index, _)| solo.contains(&(index + 1))).collect()
+    }
 }
 
 /// OCR per source language, from reading Sakurami in all four languages with
@@ -702,6 +729,7 @@ async fn run(
     ocr: Option<OcrModel>,
     text_detector: bool,
 ) -> Result<()> {
+    solo: &[usize],
     anyhow::ensure!(
         !vision || translator.is_some(),
         "--vision needs --translator with a model that sees images"
@@ -713,10 +741,8 @@ async fn run(
         .await
         .with_context(|| format!("failed to open {}", project.display()))?;
 
-    let mut pages: Vec<_> = session.snapshot().pages().map(|page| page.id()).collect();
-    if let Some(limit) = limit {
-        pages.truncate(limit);
-    }
+    let all: Vec<_> = session.snapshot().pages().map(|page| page.id()).collect();
+    let pages: Vec<_> = pick_pages(&all, limit, solo).into_iter().map(|(_, page)| page).collect();
     anyhow::ensure!(!pages.is_empty(), "project has no pages");
     eprintln!(
         "running {} stage(s) over {} page(s)",
@@ -827,6 +853,7 @@ async fn main() -> Result<()> {
             idioma,
             ocr,
         } => {
+            solo,
             // Whole-balloon text blocks (comic-text-and-bubble-detector);
             // it found every balloon of the test page in all four languages.
             let text_detector = idioma.is_some();
@@ -847,9 +874,14 @@ async fn main() -> Result<()> {
                 ocr,
                 text_detector,
             )
+                &solo,
             .await
         }
-        Command::Limpiar { project, pages } => clean(&project, pages).await,
+        Command::Limpiar {
+            project,
+            pages,
+            solo,
+        } => clean(&project, pages, &solo).await,
         Command::Regiones { project, page } => regions(&project, page).await,
         Command::Revisar {
             project,
@@ -868,7 +900,8 @@ async fn main() -> Result<()> {
             out,
             pages,
             medidas,
-        } => export(&project, &out, pages, medidas).await,
+            solo,
+        } => export(&project, &out, pages, medidas, &solo).await,
         Command::Estudiar {
             project,
             base_url,
