@@ -572,12 +572,12 @@ impl Panel {
         }
         let model = self.corrector.trim().to_owned();
         let reviewer = self.reviewer.trim().to_owned();
-        let uses_llm = self.study || (self.translate && self.llm_translation);
-        if uses_llm && model.is_empty() {
+        let llm_translation = self.translate && self.llm_translation;
+        if llm_translation && model.is_empty() {
             self.status = "Escribe el modelo local.".to_owned();
             return false;
         }
-        if self.review_step && reviewer.is_empty() {
+        if (self.study || self.review_step) && reviewer.is_empty() {
             self.status = "Escribe el modelo corrector.".to_owned();
             return false;
         }
@@ -606,18 +606,19 @@ impl Panel {
             args.extend(&page_args);
             self.push(&label("5. Traducir con DeepL"), &khr, &args, false, After::Nothing);
         }
-        if uses_llm || self.review_step {
+        let uses_llm = self.study || llm_translation || self.review_step;
+        if uses_llm {
             let lms = self.lms.clone();
             self.push(&label("Iniciar servidor de LM Studio"), &lms, &["server", "start"], true, After::Nothing);
         }
-        if uses_llm {
-            self.push(&label(&format!("Cargar {model}")), &khr, &["models", "load", &model], false, After::Nothing);
-        }
+        // Two models do not fit in 16 GB of RAM: each change frees the other.
+        let mut loaded: Option<String> = None;
         if self.study {
+            self.switch_model(&mut loaded, &reviewer, &label);
             if let Err(error) = self.save_user_notes() {
                 self.log(format!("No se guardaron tus etiquetas y descripción: {error}"));
             }
-            let mut args = vec!["estudiar", "--project", &project_arg, "--model", &model];
+            let mut args = vec!["estudiar", "--project", &project_arg, "--model", &reviewer];
             if self.left_to_right {
                 args.push("--left-to-right");
             }
@@ -629,7 +630,8 @@ impl Panel {
             };
             self.push(&label("4. Estudiar la obra (ficha y términos)"), &khr, &args, false, after);
         }
-        if self.translate && self.llm_translation {
+        if llm_translation {
+            self.switch_model(&mut loaded, &model, &label);
             let mut args = vec![
                 "run",
                 "--project",
@@ -644,13 +646,7 @@ impl Panel {
             self.push(&label(&format!("5. Traducir con {model}")), &khr, &args, false, After::Nothing);
         }
         if self.review_step {
-            // Both do not fit in 16 GB of RAM: free the translator first.
-            if uses_llm && reviewer != model {
-                self.push(&label("Liberar modelo de LM Studio"), &khr, &["models", "unload", &model], true, After::Nothing);
-            }
-            if !uses_llm || reviewer != model {
-                self.push(&label(&format!("Cargar {reviewer}")), &khr, &["models", "load", &reviewer], false, After::Nothing);
-            }
+            self.switch_model(&mut loaded, &reviewer, &label);
             let mut args = vec!["revisar", "--project", &project_arg, "--model", &reviewer];
             args.extend(&page_args);
             if self.left_to_right {
@@ -658,7 +654,7 @@ impl Panel {
             }
             self.push(&label("6. Revisar la traducción (propuestas)"), &khr, &args, false, After::Nothing);
         }
-        if uses_llm || self.review_step {
+        if let Some(loaded) = loaded {
             let after = if self.review_step {
                 After::ShowCorrections(project.clone())
             } else if self.study {
@@ -666,11 +662,23 @@ impl Panel {
             } else {
                 After::Nothing
             };
-            let loaded = if self.review_step { &reviewer } else { &model };
-            self.push(&label("Liberar modelo de LM Studio"), &khr, &["models", "unload", loaded], true, after);
+            self.push(&label("Liberar modelo de LM Studio"), &khr, &["models", "unload", &loaded], true, after);
         }
         self.status = format!("En cola: {}", self.queued_projects.join(", "));
         true
+    }
+
+    /// Queues loading `model`, freeing the one loaded before if it differs.
+    fn switch_model(&mut self, loaded: &mut Option<String>, model: &str, label: &dyn Fn(&str) -> String) {
+        if loaded.as_deref() == Some(model) {
+            return;
+        }
+        let khr = self.khr.clone();
+        if let Some(previous) = loaded.take() {
+            self.push(&label("Liberar modelo de LM Studio"), &khr, &["models", "unload", &previous], true, After::Nothing);
+        }
+        self.push(&label(&format!("Cargar {model}")), &khr, &["models", "load", model], false, After::Nothing);
+        *loaded = Some(model.to_owned());
     }
 
     fn learn(&mut self, ctx: &egui::Context) {
@@ -1381,11 +1389,11 @@ impl eframe::App for Panel {
                         ui.radio_value(&mut self.llm_translation, false, "DeepL");
                     });
                     cols[1].horizontal(|ui| {
-                        ui.label("Modelo local:");
+                        ui.label("Traductor (paso 5):");
                         ui.add(egui::TextEdit::singleline(&mut self.corrector).desired_width(240.0));
                     });
                     cols[1].horizontal(|ui| {
-                        ui.label("Corrector (paso 6):");
+                        ui.label("Ficha y corrector (4 y 6):");
                         ui.add(egui::TextEdit::singleline(&mut self.reviewer).desired_width(240.0));
                     });
                     cols[1].horizontal(|ui| {
