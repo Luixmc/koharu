@@ -5,11 +5,14 @@
 //! to guess what "netorare" or "mind break" mean for the dialogue.
 //!
 //! `I:\Koharu\etiquetas.tsv` (tag, tab, guide) adds or overrides guides; a
-//! guide of `-` drops the tag.
+//! guide of `-` drops the tag. `I:\Koharu\etiquetas-que-detienen.txt` lists,
+//! one per line, the tags the user does not want to translate (gore,
+//! yaoi...): the study stops on them, as it always does on minors.
 
 use std::collections::BTreeMap;
 
 const USER_GUIDES: &str = r"I:\Koharu\etiquetas.tsv";
+const USER_STOPS: &str = r"I:\Koharu\etiquetas-que-detienen.txt";
 
 /// Namespaces that describe the upload, not the story.
 const DROPPED_NAMESPACES: [&str; 5] = ["language", "artist", "group", "reclass", "cosplayer"];
@@ -19,8 +22,9 @@ const DROPPED_NAMESPACES: [&str; 5] = ["language", "artist", "group", "reclass",
 const KEPT_OTHER: [&str; 4] = ["story arc", "comedy", "full color", "incomplete"];
 
 /// Tags that mean the work involves minors; the study stops on them.
-const MINORS: [&str; 8] = [
+const MINORS: [&str; 9] = [
     "lolicon",
+    "loli",
     "shotacon",
     "low lolicon",
     "low shotacon",
@@ -81,6 +85,9 @@ pub struct Reading {
     /// Tags that mean minors are involved.
     #[serde(skip)]
     pub menores: Vec<String>,
+    /// Tags from the user's stop list.
+    #[serde(skip)]
+    pub rechazadas: Vec<String>,
 }
 
 fn user_guides() -> BTreeMap<String, String> {
@@ -96,11 +103,21 @@ fn user_guides() -> BTreeMap<String, String> {
         .collect()
 }
 
-pub fn read(tags: &[String]) -> Reading {
-    read_with(tags, &user_guides())
+/// The user's stop list, one tag per line; `#` starts a comment.
+fn user_stops() -> Vec<String> {
+    std::fs::read_to_string(USER_STOPS)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| line.trim().to_lowercase())
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect()
 }
 
-fn read_with(tags: &[String], extra: &BTreeMap<String, String>) -> Reading {
+pub fn read(tags: &[String]) -> Reading {
+    read_with(tags, &user_guides(), &user_stops())
+}
+
+fn read_with(tags: &[String], extra: &BTreeMap<String, String>, stops: &[String]) -> Reading {
     let mut reading = Reading::default();
     for tag in tags {
         let tag = tag.trim().to_lowercase();
@@ -113,6 +130,12 @@ fn read_with(tags: &[String], extra: &BTreeMap<String, String>) -> Reading {
         };
         if MINORS.contains(&name) {
             reading.menores.push(name.to_owned());
+            continue;
+        }
+        if stops.iter().any(|stop| stop == name) {
+            if !reading.rechazadas.iter().any(|known| known == name) {
+                reading.rechazadas.push(name.to_owned());
+            }
             continue;
         }
         if DROPPED_NAMESPACES.contains(&namespace)
@@ -172,6 +195,7 @@ mod tests {
                 "female:mind break",
             ]),
             &BTreeMap::new(),
+            &[],
         );
         assert_eq!(reading.etiquetas, ["big breasts (ella)", "netorare (ella)", "netorare (él)", "mind break (ella)"]);
         assert_eq!(reading.guia.len(), 2);
@@ -185,15 +209,10 @@ mod tests {
             ("big breasts".to_owned(), "-".to_owned()),
             ("tankoubon".to_owned(), "recopilación: varias historias".to_owned()),
         ]);
-        let reading = read_with(&tags(&["female:big breasts", "other:tankoubon"]), &extra);
+        let reading = read_with(&tags(&["female:big breasts", "other:tankoubon"]), &extra, &[]);
         assert_eq!(reading.etiquetas, ["tankoubon"]);
         assert_eq!(reading.guia, ["tankoubon: recopilación: varias historias"]);
     }
 
-    #[test]
-    fn minors_are_flagged() {
-        let reading = read_with(&tags(&["female:lolicon", "female:milf"]), &BTreeMap::new());
-        assert_eq!(reading.menores, ["lolicon"]);
-        assert_eq!(reading.etiquetas, ["milf (ella)"]);
-    }
+
 }

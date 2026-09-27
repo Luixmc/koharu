@@ -464,6 +464,13 @@ pub async fn study(
             minors.menores.join(", ")
         );
     }
+    if let Some(stopped) = tags.as_ref().filter(|tags| !tags.rechazadas.is_empty()) {
+        anyhow::bail!(
+            "la obra tiene etiquetas de tu lista que detienen el estudio ({}); \
+             edita I:\\Koharu\\etiquetas-que-detienen.txt si quieres procesarla",
+            stopped.rechazadas.join(", ")
+        );
+    }
     if let Some(user) = &user_notes {
         eprintln!(
             "starting from the user's {} tag(s) and description",

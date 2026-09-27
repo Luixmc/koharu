@@ -61,6 +61,9 @@ el sujeto suele omitirse: dedúcelo por el hablante, la ficha y los globos vecin
 
 NO cambies el estilo, los sinónimos, las groserías ni el registro si ya son correctos.
 NO cambies palabras correctas por regionalismos (dormitorio, recámara, etc. valen igual).
+"jerga_del_original" da el significado de palabras sexuales o vulgares del ORIGINAL;
+úsalo para juzgar el sentido (si la traducción suavizó o cambió una de ellas, es error de
+sentido), no como traducción obligatoria.
 Las palabras que la jerga marca como "latina" son correctas: no las corrijas; su
 significado está ahí para que entiendas la frase.
 Las marcadas "uso" son reglas (conjunciones, adverbios, cuándo va cada forma): propón un
@@ -285,6 +288,7 @@ pub async fn review(
         .collect();
     let studied = work.page_notes();
     let dictionary = slang();
+    let source_slang = work.source_slang()?;
     let skip = rejected(&work);
     let count = limit.unwrap_or(pages.len()).min(pages.len());
     eprintln!("reviewing {count} page(s)");
@@ -331,10 +335,17 @@ pub async fn review(
                 serde_json::json!({"palabra": entry.word, "tipo": entry.kind, "significado": entry.meaning})
             })
             .collect();
+        let originals: Vec<&str> = balloons.iter().map(|(block, _)| block.source.as_str()).collect();
+        let source_slang_here: Vec<_> = source_slang
+            .relevant(&originals)
+            .into_iter()
+            .map(|entry| serde_json::json!({"palabra": entry.source, "significado": entry.target}))
+            .collect();
         let user = serde_json::to_string(&serde_json::json!({
             "ficha": notes,
             "glosario": glossary,
             "jerga": slang_here,
+            "jerga_del_original": source_slang_here,
             "pagina": index + 1,
             "globos": listed,
         }))?;

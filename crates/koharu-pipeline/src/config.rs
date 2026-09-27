@@ -186,6 +186,11 @@ pub struct TranslationConfig {
     #[serde(skip)]
     #[specta(skip)]
     pub glossary: koharu_translator::Glossary,
+    /// Meanings of sexual and vulgar words of the source languages; only the
+    /// words present on a page reach the model, as help rather than rule.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub slang: koharu_translator::Glossary,
     /// What each page shows and who speaks, keyed by page id. Filled in by the
     /// caller from the work's page study.
     #[serde(skip)]
@@ -202,6 +207,7 @@ impl Default for TranslationConfig {
             instructions: None,
             work_notes: None,
             glossary: koharu_translator::Glossary::default(),
+            slang: koharu_translator::Glossary::default(),
             page_notes: std::collections::BTreeMap::new(),
         }
     }

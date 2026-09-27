@@ -23,6 +23,7 @@ use koharu_translator::Glossary;
 
 pub const WORKS_DIR: &str = r"I:\Koharu\obras";
 pub const GLOBAL_GLOSSARY: &str = r"I:\Koharu\glosario.tsv";
+const SOURCE_SLANG_DIR: &str = r"I:\Koharu\jerga-origen";
 
 /// Folder name for a project; the panel derives the same name.
 pub fn slug(project: &Path) -> String {
@@ -96,6 +97,33 @@ impl Work {
     }
 
     /// The global glossary overlaid with this work's own.
+    /// Meanings of sexual and vulgar words of every source language, from
+    /// `I:\Koharu\jerga-origen\*.tsv`, without the terms the glossary
+    /// already fixes. Each file is `word<TAB>meaning[<TAB>marks]`.
+    pub fn source_slang(&self) -> Result<Glossary> {
+        let glossary = self.glossary()?;
+        let mut slang = Glossary::default();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(SOURCE_SLANG_DIR)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "tsv"))
+            .collect();
+        files.sort();
+        for file in files {
+            let text = std::fs::read_to_string(&file)
+                .with_context(|| format!("failed to read {}", file.display()))?;
+            slang.entries.extend(
+                Glossary::parse(&text)
+                    .entries
+                    .into_iter()
+                    .filter(|entry| !glossary.contains(&entry.source) && !short_kana(&entry.source)),
+            );
+        }
+        Ok(slang)
+    }
+
     pub fn glossary(&self) -> Result<Glossary> {
         let mut glossary = Glossary::load(Path::new(GLOBAL_GLOSSARY))
             .with_context(|| format!("failed to read {GLOBAL_GLOSSARY}"))?;
@@ -269,4 +297,11 @@ impl PageNote {
         }
         text.trim_end().to_owned()
     }
+}
+
+/// One or two kana ("いい", "する", "いる") occur on nearly every Japanese
+/// page as ordinary words, and Japanese has no spaces to tell them apart, so
+/// their slang readings would mislead more than help.
+fn short_kana(term: &str) -> bool {
+    term.chars().count() <= 2 && term.chars().all(|c| matches!(c, '\u{3040}'..='\u{30ff}'))
 }

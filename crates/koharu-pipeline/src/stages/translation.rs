@@ -66,7 +66,8 @@ impl StageProcessor for Processor {
                 .get(&input.page.to_string())
                 .map(String::as_str),
         );
-        let instructions = [self.config.instructions.as_deref().unwrap_or_default(), &work, &page]
+        let slang = koharu_translator::glossary::slang_block(&self.config.slang, &sources);
+        let instructions = [self.config.instructions.as_deref().unwrap_or_default(), &work, &slang, &page]
             .into_iter()
             .map(str::trim)
             .filter(|part| !part.is_empty())

@@ -175,6 +175,36 @@ pub fn instructions_block(notes: Option<&str>, glossary: &Glossary, texts: &[&st
     block.trim_end().to_owned()
 }
 
+/// At most this many slang entries reach the model per page.
+const SLANG_PER_PAGE: usize = 30;
+
+/// What the sexual or vulgar words of the original mean, for the words that
+/// occur in `texts`. Unlike the glossary these are not fixed renderings: the
+/// translator picks the Spanish word that fits the work's register.
+pub fn slang_block(slang: &Glossary, texts: &[&str]) -> String {
+    let mut terms = slang.relevant(texts);
+    if terms.is_empty() {
+        return String::new();
+    }
+    // Longer terms say more ("中出し" over "出し"); keep those when trimming.
+    terms.sort_by_key(|entry| std::cmp::Reverse(entry.source.chars().count()));
+    terms.truncate(SLANG_PER_PAGE);
+    let mut block = String::from(
+        "JERGA DEL ORIGINAL\n\
+         Significado de palabras sexuales o vulgares que aparecen en el texto. No es una \
+         traducción obligatoria: úsalo para entender el sentido y elige la palabra según \
+         el registro de la ficha. Si una palabra aparece solo como parte de otra, ignórala.\n",
+    );
+    for entry in terms {
+        block.push_str(&format!("- \"{}\": {}", entry.source, entry.target));
+        if !entry.note.is_empty() {
+            block.push_str(&format!(" ({})", entry.note));
+        }
+        block.push('\n');
+    }
+    block.trim_end().to_owned()
+}
+
 /// The study of one page, framed for the translator or the corrector.
 pub fn page_block(note: Option<&str>) -> String {
     match note.map(str::trim).filter(|note| !note.is_empty()) {
@@ -190,6 +220,15 @@ pub fn page_block(note: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn slang_reaches_the_model_only_when_it_occurs() {
+        let slang = super::Glossary::parse("中出し\teyacular dentro\tvulgar\nおっぱい\ttetas\t\n");
+        let block = super::slang_block(&slang, &["もう中出しして"]);
+        assert!(block.contains("\"中出し\": eyacular dentro (vulgar)"));
+        assert!(!block.contains("おっぱい"));
+        assert!(super::slang_block(&slang, &["こんにちは"]).is_empty());
+    }
+
     use super::*;
 
     #[test]

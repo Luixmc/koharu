@@ -690,6 +690,7 @@ fn pipeline_config(
     let work = obra::Work::of(project);
     pipeline.translation.work_notes = work.notes();
     pipeline.translation.glossary = work.glossary()?;
+    pipeline.translation.slang = work.source_slang()?;
     if with_pages {
         pipeline.translation.page_notes = work.page_context();
     }
@@ -728,8 +729,8 @@ async fn run(
     with_pages: bool,
     ocr: Option<OcrModel>,
     text_detector: bool,
-) -> Result<()> {
     solo: &[usize],
+) -> Result<()> {
     anyhow::ensure!(
         !vision || translator.is_some(),
         "--vision needs --translator with a model that sees images"
@@ -852,8 +853,8 @@ async fn main() -> Result<()> {
             without_pages,
             idioma,
             ocr,
-        } => {
             solo,
+        } => {
             // Whole-balloon text blocks (comic-text-and-bubble-detector);
             // it found every balloon of the test page in all four languages.
             let text_detector = idioma.is_some();
@@ -873,8 +874,8 @@ async fn main() -> Result<()> {
                 !without_pages,
                 ocr,
                 text_detector,
-            )
                 &solo,
+            )
             .await
         }
         Command::Limpiar {
