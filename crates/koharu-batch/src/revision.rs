@@ -9,6 +9,10 @@
 //! corrector this replaces cost more good lines than it fixed.
 //!
 //! `aplicar` then writes the approved ones, as the user's own text.
+//!
+//! Next to the proposals goes `revision-paginas.tsv`, every balloon of every
+//! page in reading order, so the panel can show a proposal with the rest of
+//! its page around it: a line is hard to judge alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -65,6 +69,49 @@ fn approved_path(work: &Work) -> PathBuf {
 
 fn rejected_path(work: &Work) -> PathBuf {
     work.dir().join("correcciones-rechazadas.tsv")
+}
+
+fn context_path(work: &Work) -> PathBuf {
+    work.dir().join("revision-paginas.tsv")
+}
+
+const CONTEXT_HEADER: &str =
+    "# Globos de cada página en orden de lectura: página\tid\toriginal\ttraducción\n";
+
+/// Writes every balloon of `pages`, translated or not, in reading order.
+fn write_context(work: &Work, pages: &[Vec<crate::estudio::Block>]) -> Result<()> {
+    let mut text = String::from(CONTEXT_HEADER);
+    for (index, blocks) in pages.iter().enumerate() {
+        for block in blocks {
+            let translation = block
+                .translation
+                .as_ref()
+                .map(|translation| clean(translation.text.value.trim()))
+                .unwrap_or_default();
+            text.push_str(&format!(
+                "{}\t{}\t{}\t{}\n",
+                index + 1,
+                block.id,
+                clean(&block.source),
+                translation
+            ));
+        }
+    }
+    std::fs::create_dir_all(work.dir())?;
+    std::fs::write(context_path(work), text)?;
+    Ok(())
+}
+
+/// Only the page context, for proposals made before it was written.
+pub async fn context(project: &Path, right_to_left: bool) -> Result<()> {
+    let session = Session::open(project)
+        .await
+        .with_context(|| format!("failed to open {}", project.display()))?;
+    let pages = crate::estudio::pages_in_order(&session.snapshot(), right_to_left)?;
+    let work = Work::of(project);
+    write_context(&work, &pages)?;
+    println!("contexto de {} página(s) en {}", pages.len(), context_path(&work).display());
+    Ok(())
 }
 
 fn clean(text: &str) -> String {
@@ -257,6 +304,7 @@ pub async fn review(
     }
     std::fs::create_dir_all(work.dir())?;
     std::fs::write(proposals_path(&work), text)?;
+    write_context(&work, &pages)?;
     println!("{} propuesta(s) en {}", found.len(), proposals_path(&work).display());
     Ok(())
 }
@@ -311,7 +359,31 @@ pub async fn apply(project: &Path) -> Result<()> {
         Ok(())
     })?;
     session.commit(patch).await?;
+    refresh_context(&work, &approved)?;
     std::fs::write(&path, "# Correcciones aprobadas pendientes de aplicar: id\tpropuesta\n")?;
     println!("{} corrección(es) aplicada(s)", writes.len());
+    Ok(())
+}
+
+/// Puts the applied text into the page context, so the panel does not show
+/// the old line around the next proposals.
+fn refresh_context(work: &Work, applied: &BTreeMap<String, String>) -> Result<()> {
+    let Ok(text) = std::fs::read_to_string(context_path(work)) else {
+        return Ok(());
+    };
+    let mut out = String::new();
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        match (line.starts_with('#'), fields.as_slice()) {
+            (false, [page, id, original, _]) if applied.contains_key(*id) => {
+                out.push_str(&format!("{page}\t{id}\t{original}\t{}\n", clean(&applied[*id])));
+            }
+            _ => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    std::fs::write(context_path(work), out)?;
     Ok(())
 }

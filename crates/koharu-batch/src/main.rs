@@ -229,6 +229,17 @@ enum Command {
         left_to_right: bool,
     },
 
+    /// Write every page's balloons in reading order next to the proposals,
+    /// for the panel to show each one in context (revisar already does it).
+    Contexto {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+
+        /// Read balloons left to right; manga and manhwa read the other way.
+        #[arg(long)]
+        left_to_right: bool,
+    },
+
     /// Write the corrections approved in the panel into the project.
     Aplicar {
         #[arg(short, long, value_name = "KHRPROJ")]
@@ -802,6 +813,10 @@ async fn main() -> Result<()> {
             pages,
             left_to_right,
         } => revision::review(&project, &base_url, &model, !left_to_right, pages).await,
+        Command::Contexto {
+            project,
+            left_to_right,
+        } => revision::context(&project, !left_to_right).await,
         Command::Aplicar { project } => revision::apply(&project).await,
         Command::Exportar {
             project,

@@ -51,6 +51,15 @@ struct Correction {
     reason: String,
 }
 
+/// One balloon of a reviewed page, from `revision-paginas.tsv`, to show the
+/// proposals with the rest of their page around them.
+struct Balloon {
+    page: String,
+    id: String,
+    original: String,
+    translation: String,
+}
+
 /// One glossary line: original, rendering and an optional note.
 #[derive(Clone)]
 struct Term {
@@ -157,6 +166,7 @@ struct Panel {
     corrections_open: bool,
     corrections: Vec<Correction>,
     approved_corrections: usize,
+    page_balloons: Vec<Balloon>,
     /// Correction being turned into a glossary term: (original, rendering).
     new_term: Option<(String, String)>,
 }
@@ -210,6 +220,7 @@ impl Panel {
             corrections_open: false,
             corrections: Vec::new(),
             approved_corrections: 0,
+            page_balloons: Vec::new(),
             new_term: None,
         };
         panel.reload_projects();
@@ -929,6 +940,7 @@ impl Panel {
     fn load_corrections(&mut self) {
         let Some(dir) = self.work_dir() else { return };
         self.corrections = read_corrections(&dir.join("correcciones.tsv"));
+        self.page_balloons = read_balloons(&dir.join("revision-paginas.tsv"));
         self.approved_corrections = read_lines(&dir.join("correcciones-aprobadas.tsv")).len();
     }
 
@@ -969,6 +981,12 @@ impl Panel {
         }
         if approve {
             self.approved_corrections = kept.len();
+            // The page around the next proposals shows the approved line.
+            for balloon in &mut self.page_balloons {
+                if balloon.id == correction.id {
+                    balloon.translation = correction.proposal.replace(['\t', '\n'], " ");
+                }
+            }
         }
     }
 
@@ -1010,6 +1028,21 @@ impl Panel {
             After::Nothing,
         );
         self.approved_corrections = 0;
+        self.begin(ctx);
+    }
+
+    /// Proposals made before `revisar` saved the pages around them: read the
+    /// pages now (quick, no model) and reopen the window with them.
+    fn load_page_context(&mut self, ctx: &egui::Context) {
+        let Some(project) = self.project().map(Path::to_path_buf) else { return };
+        self.lines.clear();
+        let khr = self.khr.clone();
+        let project_arg = project.display().to_string();
+        let mut args = vec!["contexto", "--project", &project_arg];
+        if self.left_to_right {
+            args.push("--left-to-right");
+        }
+        self.push("Leer las páginas de las correcciones", &khr, &args, true, After::ShowCorrections);
         self.begin(ctx);
     }
 
@@ -1061,43 +1094,51 @@ impl Panel {
                     ui.label("No hay correcciones pendientes. Se generan con el paso 6 (Revisar la traducción).");
                     return;
                 }
-                ui.label("Puedes editar la propuesta antes de aprobarla.");
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.label("La página entera en orden de lectura;");
+                    ui.label(diff_job(ui, &[(Piece::Removed, "tachado en rojo".to_owned())], Piece::Removed));
+                    ui.label("lo que se quita,");
+                    ui.label(diff_job(ui, &[(Piece::Added, "en verde".to_owned())], Piece::Added));
+                    ui.label("lo que entra. La propuesta se puede editar antes de aprobarla.");
+                });
+                let corrections = &mut self.corrections;
+                let balloons = &self.page_balloons;
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    egui::Grid::new("corrections").striped(true).num_columns(2).show(ui, |ui| {
-                        for (index, correction) in self.corrections.iter_mut().enumerate() {
-                            ui.vertical(|ui| {
-                                ui.label(egui::RichText::new(format!("Pág. {}", correction.page)).strong());
-                                if ui.button("Aprobar").clicked() {
-                                    decision = Some((index, true));
-                                }
-                                if ui.button("Rechazar").clicked() {
-                                    decision = Some((index, false));
-                                }
-                                if ui.button("Aprobar + glosario").clicked() {
-                                    to_glossary = Some(index);
-                                }
-                            });
-                            ui.vertical(|ui| {
-                                ui.label(egui::RichText::new(&correction.original).weak());
-                                ui.label(
-                                    egui::RichText::new(format!("- {}", correction.current))
-                                        .color(egui::Color32::from_rgb(200, 140, 110)),
-                                );
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new("+").color(egui::Color32::from_rgb(110, 200, 120)),
-                                    );
-                                    ui.add(
-                                        egui::TextEdit::multiline(&mut correction.proposal)
-                                            .desired_rows(1)
-                                            .desired_width(620.0),
-                                    );
-                                });
-                                ui.label(egui::RichText::new(&correction.reason).italics().weak());
-                            });
-                            ui.end_row();
+                    let mut pages: Vec<String> = Vec::new();
+                    for correction in corrections.iter() {
+                        if !pages.contains(&correction.page) {
+                            pages.push(correction.page.clone());
                         }
-                    });
+                    }
+                    for page in &pages {
+                        ui.add_space(6.0);
+                        ui.heading(format!("Página {page}"));
+                        let mut shown = Vec::new();
+                        for balloon in balloons.iter().filter(|balloon| &balloon.page == page) {
+                            match corrections.iter().position(|c| c.id == balloon.id) {
+                                Some(index) => {
+                                    shown.push(index);
+                                    correction_card(ui, index, &mut corrections[index], &mut decision, &mut to_glossary);
+                                }
+                                None if balloon.translation.is_empty() => {
+                                    ui.label(egui::RichText::new(format!("({})", balloon.original)).weak())
+                                        .on_hover_text("Sin traducir");
+                                }
+                                None => {
+                                    ui.label(&balloon.translation).on_hover_text(&balloon.original);
+                                }
+                            }
+                        }
+                        // Proposals whose balloon the saved page does not
+                        // hold (no context yet, or the page changed).
+                        for index in 0..corrections.len() {
+                            if &corrections[index].page == page && !shown.contains(&index) {
+                                correction_card(ui, index, &mut corrections[index], &mut decision, &mut to_glossary);
+                            }
+                        }
+                        ui.separator();
+                    }
                 });
             });
         self.corrections_open = open;
@@ -1336,6 +1377,9 @@ impl eframe::App for Panel {
                 if ui.add_enabled(self.project().is_some(), egui::Button::new("Correcciones")).clicked() {
                     self.load_corrections();
                     self.corrections_open = true;
+                    if !self.corrections.is_empty() && self.page_balloons.is_empty() && !busy {
+                        self.load_page_context(&ctx);
+                    }
                 }
                 if ui.add_enabled(!busy, egui::Button::new("Liberar VRAM")).clicked() {
                     self.lines.clear();
@@ -1528,6 +1572,147 @@ fn write_corrections(path: &Path, corrections: &[Correction]) -> std::io::Result
     std::fs::write(path, text)
 }
 
+fn read_balloons(path: &Path) -> Vec<Balloon> {
+    read_lines(path)
+        .into_iter()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            Some(Balloon {
+                page: fields.next()?.to_owned(),
+                id: fields.next()?.to_owned(),
+                original: fields.next()?.to_owned(),
+                translation: fields.next().unwrap_or_default().to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// A proposal inside its page: the original, the line as it is with what
+/// goes struck out, the line as it would be with what comes in, the editable
+/// proposal and the buttons.
+fn correction_card(
+    ui: &mut egui::Ui,
+    index: usize,
+    correction: &mut Correction,
+    decision: &mut Option<(usize, bool)>,
+    to_glossary: &mut Option<usize>,
+) {
+    let accent = if ui.visuals().dark_mode {
+        egui::Color32::from_rgb(220, 180, 80)
+    } else {
+        egui::Color32::from_rgb(190, 130, 20)
+    };
+    egui::Frame::group(ui.style())
+        .stroke(egui::Stroke::new(1.5, accent))
+        .inner_margin(8.0)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(egui::RichText::new(&correction.original).weak());
+            let pieces = word_diff(&correction.current, &correction.proposal);
+            ui.horizontal_top(|ui| {
+                ui.label(egui::RichText::new("Ahora:").strong());
+                ui.label(diff_job(ui, &pieces, Piece::Removed));
+            });
+            ui.horizontal_top(|ui| {
+                ui.label(egui::RichText::new("Queda:").strong());
+                ui.label(diff_job(ui, &pieces, Piece::Added));
+            });
+            ui.add(
+                egui::TextEdit::multiline(&mut correction.proposal)
+                    .desired_rows(1)
+                    .desired_width(f32::INFINITY),
+            );
+            ui.label(egui::RichText::new(&correction.reason).italics().weak());
+            ui.horizontal(|ui| {
+                if ui.button("Aprobar").clicked() {
+                    *decision = Some((index, true));
+                }
+                if ui.button("Rechazar").clicked() {
+                    *decision = Some((index, false));
+                }
+                if ui.button("Aprobar + glosario").clicked() {
+                    *to_glossary = Some(index);
+                }
+            });
+        });
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Piece {
+    Same,
+    Removed,
+    Added,
+}
+
+/// Word by word difference between the current line and the proposal
+/// (longest common subsequence; balloons are short).
+fn word_diff(before: &str, after: &str) -> Vec<(Piece, String)> {
+    let a: Vec<&str> = before.split_whitespace().collect();
+    let b: Vec<&str> = after.split_whitespace().collect();
+    let mut common = vec![vec![0_usize; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            common[i][j] = if a[i] == b[j] {
+                common[i + 1][j + 1] + 1
+            } else {
+                common[i + 1][j].max(common[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut pieces: Vec<(Piece, String)> = Vec::new();
+    let mut push = |piece: Piece, word: &str| match pieces.last_mut() {
+        Some((last, text)) if *last == piece => {
+            text.push(' ');
+            text.push_str(word);
+        }
+        _ => pieces.push((piece, word.to_owned())),
+    };
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i] == b[j] {
+            push(Piece::Same, a[i]);
+            i += 1;
+            j += 1;
+        } else if i < a.len() && (j == b.len() || common[i + 1][j] >= common[i][j + 1]) {
+            push(Piece::Removed, a[i]);
+            i += 1;
+        } else {
+            push(Piece::Added, b[j]);
+            j += 1;
+        }
+    }
+    pieces
+}
+
+/// One side of a difference: the shared words plus the `side` ones, marked.
+fn diff_job(ui: &egui::Ui, pieces: &[(Piece, String)], side: Piece) -> egui::text::LayoutJob {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let plain = ui.visuals().text_color();
+    let (color, background) = match (side, ui.visuals().dark_mode) {
+        (Piece::Removed, true) => (egui::Color32::from_rgb(255, 150, 140), egui::Color32::from_rgb(95, 35, 35)),
+        (Piece::Removed, false) => (egui::Color32::from_rgb(160, 30, 30), egui::Color32::from_rgb(255, 215, 215)),
+        (_, true) => (egui::Color32::from_rgb(150, 235, 150), egui::Color32::from_rgb(30, 80, 40)),
+        (_, false) => (egui::Color32::from_rgb(20, 110, 40), egui::Color32::from_rgb(210, 245, 210)),
+    };
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = ui.available_width().max(200.0);
+    for (piece, text) in pieces.iter().filter(|(piece, _)| *piece == Piece::Same || *piece == side) {
+        if !job.text.is_empty() {
+            job.append(" ", 0.0, egui::TextFormat::simple(font.clone(), plain));
+        }
+        let mut format = egui::TextFormat::simple(font.clone(), plain);
+        if *piece != Piece::Same {
+            format.color = color;
+            format.background = background;
+            if side == Piece::Removed {
+                format.strikethrough = egui::Stroke::new(1.5, color);
+            }
+        }
+        job.append(text, 0.0, format);
+    }
+    job
+}
+
 fn log_base(project: &Path) -> String {
     project
         .file_stem()
@@ -1588,6 +1773,20 @@ mod tests {
             ignore_error: false,
             after: After::Nothing,
         }
+    }
+
+    #[test]
+    fn the_difference_marks_only_changed_words() {
+        let pieces = word_diff("Este primavera me caso", "Esta primavera me caso contigo");
+        assert_eq!(
+            pieces,
+            vec![
+                (Piece::Removed, "Este".to_owned()),
+                (Piece::Added, "Esta".to_owned()),
+                (Piece::Same, "primavera me caso".to_owned()),
+                (Piece::Added, "contigo".to_owned()),
+            ]
+        );
     }
 
     #[test]
