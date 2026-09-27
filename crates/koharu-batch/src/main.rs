@@ -1681,6 +1681,10 @@ async fn models(action: ModelsAction) -> Result<()> {
                 "max",
                 "--context-length",
                 &context,
+                // Each extra slot keeps its own cache in RAM; khr asks one
+                // thing at a time.
+                "--parallel",
+                "1",
                 "-y",
             ])?;
             println!("{}", clean_output(&raw));

@@ -20,6 +20,9 @@ const PROJECTS_DIR: &str = r"I:\Usuario\Documentos\Koharu";
 const WORKS_DIR: &str = r"I:\Koharu\obras";
 const GLOBAL_GLOSSARY: &str = r"I:\Koharu\glosario.tsv";
 const DEFAULT_CORRECTOR: &str = "gemma-4-12b-it-qat";
+/// Cydonia corrects Spanish better than Gemma (adverbs, word order), and
+/// only step 6 needs it, so it takes the memory once Gemma is gone.
+const DEFAULT_REVIEWER: &str = "thedrummer_cydonia-24b-v4.3";
 /// Source languages; khr picks the OCR that reads each one best.
 const LANGUAGES: [(&str, &str); 4] =
     [("ja", "Japonés"), ("ko", "Coreano"), ("zh", "Chino"), ("en", "Inglés")];
@@ -147,6 +150,7 @@ struct Panel {
     review_step: bool,
     llm_translation: bool,
     corrector: String,
+    reviewer: String,
     pages: u32,
     left_to_right: bool,
     idioma: usize,
@@ -202,6 +206,7 @@ impl Panel {
             review_step: true,
             llm_translation: true,
             corrector: DEFAULT_CORRECTOR.to_owned(),
+            reviewer: DEFAULT_REVIEWER.to_owned(),
             pages: 0,
             left_to_right: false,
             idioma: 0,
@@ -566,9 +571,14 @@ impl Panel {
             return false;
         }
         let model = self.corrector.trim().to_owned();
-        let uses_llm = self.study || self.review_step || (self.translate && self.llm_translation);
+        let reviewer = self.reviewer.trim().to_owned();
+        let uses_llm = self.study || (self.translate && self.llm_translation);
         if uses_llm && model.is_empty() {
             self.status = "Escribe el modelo local.".to_owned();
+            return false;
+        }
+        if self.review_step && reviewer.is_empty() {
+            self.status = "Escribe el modelo corrector.".to_owned();
             return false;
         }
         let name = project
@@ -596,9 +606,11 @@ impl Panel {
             args.extend(&page_args);
             self.push(&label("5. Traducir con DeepL"), &khr, &args, false, After::Nothing);
         }
-        if uses_llm {
+        if uses_llm || self.review_step {
             let lms = self.lms.clone();
             self.push(&label("Iniciar servidor de LM Studio"), &lms, &["server", "start"], true, After::Nothing);
+        }
+        if uses_llm {
             self.push(&label(&format!("Cargar {model}")), &khr, &["models", "load", &model], false, After::Nothing);
         }
         if self.study {
@@ -632,14 +644,21 @@ impl Panel {
             self.push(&label(&format!("5. Traducir con {model}")), &khr, &args, false, After::Nothing);
         }
         if self.review_step {
-            let mut args = vec!["revisar", "--project", &project_arg, "--model", &model];
+            // Both do not fit in 16 GB of RAM: free the translator first.
+            if uses_llm && reviewer != model {
+                self.push(&label("Liberar modelo de LM Studio"), &khr, &["models", "unload", &model], true, After::Nothing);
+            }
+            if !uses_llm || reviewer != model {
+                self.push(&label(&format!("Cargar {reviewer}")), &khr, &["models", "load", &reviewer], false, After::Nothing);
+            }
+            let mut args = vec!["revisar", "--project", &project_arg, "--model", &reviewer];
             args.extend(&page_args);
             if self.left_to_right {
                 args.push("--left-to-right");
             }
             self.push(&label("6. Revisar la traducción (propuestas)"), &khr, &args, false, After::Nothing);
         }
-        if uses_llm {
+        if uses_llm || self.review_step {
             let after = if self.review_step {
                 After::ShowCorrections(project.clone())
             } else if self.study {
@@ -647,7 +666,8 @@ impl Panel {
             } else {
                 After::Nothing
             };
-            self.push(&label("Liberar modelo de LM Studio"), &khr, &["models", "unload", &model], true, after);
+            let loaded = if self.review_step { &reviewer } else { &model };
+            self.push(&label("Liberar modelo de LM Studio"), &khr, &["models", "unload", loaded], true, after);
         }
         self.status = format!("En cola: {}", self.queued_projects.join(", "));
         true
@@ -1363,6 +1383,10 @@ impl eframe::App for Panel {
                     cols[1].horizontal(|ui| {
                         ui.label("Modelo local:");
                         ui.add(egui::TextEdit::singleline(&mut self.corrector).desired_width(240.0));
+                    });
+                    cols[1].horizontal(|ui| {
+                        ui.label("Corrector (paso 6):");
+                        ui.add(egui::TextEdit::singleline(&mut self.reviewer).desired_width(240.0));
                     });
                     cols[1].horizontal(|ui| {
                         ui.label("Páginas (0 = todas):");
