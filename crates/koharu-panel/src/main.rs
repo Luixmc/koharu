@@ -1121,6 +1121,7 @@ impl Panel {
         let mut save_term = false;
         let mut cancel_term = false;
         let mut apply = false;
+        let mut all: Option<bool> = None;
         let busy = self.current.is_some();
         egui::Window::new("Correcciones propuestas")
             .open(&mut open)
@@ -1170,6 +1171,14 @@ impl Panel {
                     ui.label(diff_job(ui, &[(Piece::Added, "en verde".to_owned())], Piece::Added));
                     ui.label("lo que entra. La propuesta se puede editar antes de aprobarla.");
                 });
+                ui.horizontal(|ui| {
+                    if ui.button("Aprobar todas").clicked() {
+                        all = Some(true);
+                    }
+                    if ui.button("Rechazar todas").clicked() {
+                        all = Some(false);
+                    }
+                });
                 let corrections = &mut self.corrections;
                 let balloons = &self.page_balloons;
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1212,6 +1221,14 @@ impl Panel {
         self.corrections_open = open;
         if let Some((index, approve)) = decision {
             self.decide_correction(index, approve);
+        }
+        if let Some(approve) = all
+            && self.work_dir().is_some()
+        {
+            // Edits made in the cards are kept: each one goes out as shown.
+            while !self.corrections.is_empty() {
+                self.decide_correction(0, approve);
+            }
         }
         if let Some(index) = to_glossary
             && let Some(correction) = self.corrections.get(index).cloned()
