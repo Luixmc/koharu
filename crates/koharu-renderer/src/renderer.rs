@@ -52,6 +52,13 @@ const MAX_RESOURCE_READS: usize = 8;
 const ASSETS_KIND: &str = "dev.koharu.assets";
 const MINIMUM_FONT_SIZE: f32 = 9.0;
 
+/// Text with no balloon used a fixed 24 px ceiling, a third of the balloon
+/// text on 6250 px scans (measured: ~84 px median there). Scale it with the
+/// page, keeping 24 px as the floor for small pages.
+fn free_text_maximum(page_height: u32) -> f32 {
+    (page_height as f32 / 80.0).max(24.0)
+}
+
 #[derive(Clone)]
 pub struct Renderer {
     inner: Arc<RendererInner>,
@@ -810,6 +817,7 @@ impl Traversal<'_> {
                 .map(Into::into),
             font_size: typography.as_ref().and_then(|value| value.size),
             minimum_font_size: MINIMUM_FONT_SIZE,
+            free_text_maximum: free_text_maximum(self.height),
             auto_fit: typography.as_ref().is_none_or(|value| value.auto_fit),
             alignment,
             writing_mode,

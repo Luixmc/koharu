@@ -259,6 +259,10 @@ enum Command {
         /// Only the first N pages.
         #[arg(long, value_name = "N")]
         pages: Option<usize>,
+
+        /// Also write medidas.tsv: font size and layout box of every text.
+        #[arg(long)]
+        medidas: bool,
     },
 
     /// Print the regions detection found on one page, as JSON, to draw them.
@@ -491,11 +495,13 @@ async fn export(
     project: &std::path::Path,
     out: &std::path::Path,
     limit: Option<usize>,
+    medidas: bool,
 ) -> Result<()> {
     let session = Session::open(project)
         .await
         .with_context(|| format!("failed to open {}", project.display()))?;
     let snapshot = session.snapshot();
+    let mut report = String::from("pagina\tligado\tletra\tancho\talto\tchars\ttexto\n");
     let renderer = koharu_renderer::Renderer::from_config(koharu_renderer::TypesettingConfig::load()?)?;
     let rasterizer = koharu_rasterizer::Rasterizer::new()?;
     std::fs::create_dir_all(out)?;
@@ -503,12 +509,50 @@ async fn export(
     let count = limit.unwrap_or(pages.len()).min(pages.len());
     for (index, page) in pages.iter().take(count).enumerate() {
         let frame = renderer.render(&snapshot, *page).await?;
+        if medidas {
+            for layer in frame.layers() {
+                let koharu_renderer::LayerKind::Text(text) = layer.kind() else {
+                    continue;
+                };
+                let entity = layer.entity();
+                let ligado = if snapshot
+                    .relation_from::<koharu_scene::FlowsIn>(entity)?
+                    .is_some()
+                {
+                    "globo"
+                } else if snapshot
+                    .relation_from::<koharu_scene::FitsTo>(entity)?
+                    .is_some()
+                {
+                    "caja"
+                } else {
+                    "libre"
+                };
+                report.push_str(&format!(
+                    "{}\t{ligado}\t{:.1}\t{:.0}\t{:.0}\t{}\t{}\n",
+                    index + 1,
+                    text.font_size,
+                    text.layout_bounds.width,
+                    text.layout_bounds.height,
+                    text.text.chars().count(),
+                    text.text.replace(['\t', '\n'], " "),
+                ));
+            }
+        }
         let image = rasterizer
             .rasterize(&frame.raster_frame()?, koharu_rasterizer::RasterOptions::default())?
             .image;
         let path = out.join(format!("{:03}.png", index + 1));
         image.save(&path)?;
+        drop((frame, image));
+        // Each page's vector nodes would otherwise stay cached (~250 MB a
+        // page): a 200-page book ran the PC out of RAM.
+        renderer.discard_retained_nodes();
         eprintln!("  {}", path.display());
+        progress(index + 1, count, "exportar");
+    }
+    if medidas {
+        std::fs::write(out.join("medidas.tsv"), report)?;
     }
     Ok(())
 }
@@ -823,7 +867,8 @@ async fn main() -> Result<()> {
             project,
             out,
             pages,
-        } => export(&project, &out, pages).await,
+            medidas,
+        } => export(&project, &out, pages, medidas).await,
         Command::Estudiar {
             project,
             base_url,

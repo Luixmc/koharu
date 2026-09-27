@@ -31,6 +31,9 @@ pub(crate) struct TextNodeDescriptor {
     pub(crate) font_style: Option<FontStyle>,
     pub(crate) font_size: Option<f32>,
     pub(crate) minimum_font_size: f32,
+    /// Auto-fit ceiling for text outside a balloon, which has no shape to
+    /// bound it.
+    pub(crate) free_text_maximum: f32,
     pub(crate) auto_fit: bool,
     pub(crate) alignment: TextAlign,
     pub(crate) writing_mode: WritingMode,
@@ -331,7 +334,7 @@ fn automatic_maximum(
             bounds.width
         }
     } else {
-        24.0
+        descriptor.free_text_maximum
     }
 }
 
@@ -459,6 +462,7 @@ mod tests {
             font_style: None,
             font_size: Some(6.0),
             minimum_font_size: 9.0,
+            free_text_maximum: 24.0,
             auto_fit: true,
             alignment: TextAlign::Center,
             writing_mode: WritingMode::Horizontal,

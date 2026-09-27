@@ -18,6 +18,8 @@ use eframe::egui;
 
 const PROJECTS_DIR: &str = r"I:\Usuario\Documentos\Koharu";
 const WORKS_DIR: &str = r"I:\Koharu\obras";
+/// Finished pages go to a folder named after the project in here.
+const EXPORT_DIR: &str = r"I:\Koharu\output";
 const GLOBAL_GLOSSARY: &str = r"I:\Koharu\glosario.tsv";
 const DEFAULT_CORRECTOR: &str = "gemma-4-12b-it-qat";
 /// Cydonia corrects Spanish better than Gemma (adverbs, word order), and
@@ -1155,6 +1157,28 @@ impl Panel {
         self.begin(ctx);
     }
 
+    /// Renders the finished pages with khr, one at a time: exporting from the
+    /// Koharu app kept every page in memory and took the PC down.
+    fn export_pages(&mut self, ctx: &egui::Context) {
+        let Some(project) = self.project().map(Path::to_path_buf) else { return };
+        if self.current.is_some() {
+            return;
+        }
+        self.lines.clear();
+        let out = Path::new(EXPORT_DIR).join(project_name(&project));
+        let khr = self.khr.clone();
+        let project_arg = project.display().to_string();
+        let out_arg = out.display().to_string();
+        self.push(
+            &format!("[{}] Exportar páginas → {out_arg}", project_name(&project)),
+            &khr,
+            &["exportar", "--project", &project_arg, "--out", &out_arg],
+            false,
+            After::Nothing,
+        );
+        self.begin(ctx);
+    }
+
     /// Proposals made before `revisar` saved the pages around them: read the
     /// pages now (quick, no model) and reopen the window with them.
     fn load_page_context(&mut self, ctx: &egui::Context) {
@@ -1526,6 +1550,13 @@ impl eframe::App for Panel {
                     && confirm_koharu_closed()
                 {
                     self.learn(&ctx);
+                }
+                if ui
+                    .add_enabled(can_run, egui::Button::new("Exportar páginas"))
+                    .on_hover_text(format!("PNG terminadas en {EXPORT_DIR}\\<proyecto>. Guarda el proyecto en Koharu antes."))
+                    .clicked()
+                {
+                    self.export_pages(&ctx);
                 }
                 if ui.add_enabled(self.project().is_some(), egui::Button::new("Glosario y ficha")).clicked() {
                     self.load_glossary();
