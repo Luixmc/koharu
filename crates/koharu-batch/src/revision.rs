@@ -13,6 +13,16 @@
 //! Next to the proposals goes `revision-paginas.tsv`, every balloon of every
 //! page in reading order, so the panel can show a proposal with the rest of
 //! its page around it: a line is hard to judge alone.
+//!
+//! The model first says who speaks each balloon and to whom, starting from
+//! the page study when there is one, and only then proposes changes: the
+//! wrong person is the most common error left, and it cannot be judged
+//! without deciding who talks. That reading is saved with the page, so the
+//! user can see when a proposal rests on the wrong speaker.
+//!
+//! Words of the translation found in the slang dictionary (`jerga.tsv`) go
+//! with their page: Latin American slang is explained so it is not
+//! "corrected", and words from Spain come with the Latin American one to use.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -20,12 +30,20 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use koharu_scene::{Authored, EntityId, Session, Translation};
 
-use crate::obra::Work;
+use crate::obra::{PageNote, Work};
 use crate::{ChatMessage, ChatRequest, ChatResponse, extract_json};
 
 const PROMPT: &str = r#"Eres revisor de una traducción de manga al español latino neutro.
-Recibes la ficha de la obra, su glosario y los globos de UNA página, cada uno con el
-original y la traducción actual, en orden de lectura.
+Recibes la ficha de la obra, su glosario, un diccionario de jerga con las palabras de
+esta página y los globos de UNA página, cada uno con el original y la traducción actual,
+en orden de lectura. Algunos globos traen "habla_segun_estudio": quién habla y a quién
+según un estudio previo de la página; suele acertar, pero puede estar mal.
+
+PRIMERO, en "hablantes", di para CADA globo quién habla y a quién (nombres de la ficha,
+o "narrador", "pensamiento de X", "?" si no se sabe). Si el estudio dice otra cosa y el
+original lo contradice claramente, pon el tuyo y explica en "duda" por qué. Si no estás
+seguro de quién habla, escribe la duda; si estás seguro, deja "duda" vacío.
+DESPUÉS, en "cambios", propón correcciones usando esos hablantes.
 
 Propón un cambio SOLO si el globo tiene alguno de estos errores:
 - gramática: ortografía, concordancia de género o número, conjugación, signos mal puestos.
@@ -34,6 +52,8 @@ Propón un cambio SOLO si el globo tiene alguno de estos errores:
 - sentido: la traducción dice algo que el original no dice, o se come una parte importante.
 - glosario: un término del glosario aparece traducido de otra forma.
 - sin traducir: quedaron palabras en japonés, coreano, chino o inglés.
+- regionalismo: la traducción usa una palabra que la jerga marca como "españa" o
+  "regional"; cámbiala por la que indica.
 
 Para revisar la persona, en cada globo pregúntate quién hace cada acción en el original
 (yo, tú, él, ellos) y si la traducción conjuga el verbo con esa misma persona. En japonés
@@ -41,13 +61,69 @@ el sujeto suele omitirse: dedúcelo por el hablante, la ficha y los globos vecin
 
 NO cambies el estilo, los sinónimos, las groserías ni el registro si ya son correctos.
 NO cambies palabras correctas por regionalismos (dormitorio, recámara, etc. valen igual).
+Las palabras que la jerga marca como "latina" son correctas: no las corrijas; su
+significado está ahí para que entiendas la frase.
+Las marcadas "uso" son reglas (conjunciones, adverbios, cuándo va cada forma): propón un
+cambio SOLO si la traducción incumple la regla; motivo "gramática". Las marcadas "error"
+son faltas conocidas: cámbialas siempre por la forma correcta; motivo "gramática".
 NO toques la puntuación si ya es correcta en español (¡¿...?! es correcto).
 NO corrijas onomatopeyas, gemidos ni risas.
 El cambio debe ser mínimo: conserva la frase y corrige solo lo necesario, que suene natural.
 Si un globo está bien, no lo incluyas. Es normal que una página no tenga ningún cambio.
 
 Responde solo el JSON pedido. "motivo" es una de: gramática, persona, sentido, glosario,
-sin traducir; seguida de una explicación de pocas palabras."#;
+sin traducir, regionalismo; seguida de una explicación de pocas palabras."#;
+
+const SLANG: &str = r"I:\Koharu\jerga.tsv";
+
+/// One slang dictionary line: the word, its kind ("latina", "españa",
+/// "regional", "uso" for a usage rule, "error" for a known misspelling) and
+/// its meaning, the word to use instead or the rule.
+struct Slang {
+    word: String,
+    kind: String,
+    meaning: String,
+}
+
+fn slang() -> Vec<Slang> {
+    std::fs::read_to_string(SLANG)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#') && !line.trim().is_empty())
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            Some(Slang {
+                word: fields.next()?.trim().to_lowercase(),
+                kind: fields.next()?.trim().to_lowercase(),
+                meaning: fields.next().unwrap_or_default().trim().to_owned(),
+            })
+        })
+        .filter(|entry| !entry.word.is_empty())
+        .collect()
+}
+
+/// Whether `word` appears in `text` as a whole word or phrase.
+fn has_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(start, _)| {
+        let before = text[..start].chars().next_back();
+        let after = text[start + word.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
+
+/// "who → to whom" from the page study, when it knows the speaker.
+fn studied_speaker(note: Option<&PageNote>, source: &str) -> Option<String> {
+    let known = |value: &str| {
+        let value = value.trim();
+        (!value.is_empty() && value != "?").then(|| value.to_owned())
+    };
+    let balloon = note?.globos.iter().find(|balloon| balloon.original == source)?;
+    let speaker = known(&balloon.habla)?;
+    Some(match known(&balloon.a_quien) {
+        Some(listener) => format!("{speaker} → {listener}"),
+        None => speaker,
+    })
+}
 
 /// One proposal awaiting the user's decision.
 struct Proposal {
@@ -57,6 +133,7 @@ struct Proposal {
     current: String,
     proposal: String,
     reason: String,
+    speaker: String,
 }
 
 fn proposals_path(work: &Work) -> PathBuf {
@@ -76,10 +153,15 @@ fn context_path(work: &Work) -> PathBuf {
 }
 
 const CONTEXT_HEADER: &str =
-    "# Globos de cada página en orden de lectura: página\tid\toriginal\ttraducción\n";
+    "# Globos de cada página en orden de lectura: página\tid\toriginal\ttraducción\thabla\n";
 
-/// Writes every balloon of `pages`, translated or not, in reading order.
-fn write_context(work: &Work, pages: &[Vec<crate::estudio::Block>]) -> Result<()> {
+/// Writes every balloon of `pages`, translated or not, in reading order, with
+/// who the reviewer took to be speaking, by balloon id.
+fn write_context(
+    work: &Work,
+    pages: &[Vec<crate::estudio::Block>],
+    speakers: &BTreeMap<String, String>,
+) -> Result<()> {
     let mut text = String::from(CONTEXT_HEADER);
     for (index, blocks) in pages.iter().enumerate() {
         for block in blocks {
@@ -88,12 +170,14 @@ fn write_context(work: &Work, pages: &[Vec<crate::estudio::Block>]) -> Result<()
                 .as_ref()
                 .map(|translation| clean(translation.text.value.trim()))
                 .unwrap_or_default();
+            let id = block.id.to_string();
             text.push_str(&format!(
-                "{}\t{}\t{}\t{}\n",
+                "{}\t{}\t{}\t{}\t{}\n",
                 index + 1,
-                block.id,
+                id,
                 clean(&block.source),
-                translation
+                translation,
+                speakers.get(&id).map(|speaker| clean(speaker)).unwrap_or_default()
             ));
         }
     }
@@ -109,7 +193,7 @@ pub async fn context(project: &Path, right_to_left: bool) -> Result<()> {
         .with_context(|| format!("failed to open {}", project.display()))?;
     let pages = crate::estudio::pages_in_order(&session.snapshot(), right_to_left)?;
     let work = Work::of(project);
-    write_context(&work, &pages)?;
+    write_context(&work, &pages, &BTreeMap::new())?;
     println!("contexto de {} página(s) en {}", pages.len(), context_path(&work).display());
     Ok(())
 }
@@ -122,6 +206,20 @@ fn schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "properties": {
+            "hablantes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "n": {"type": "integer"},
+                        "habla": {"type": "string"},
+                        "a_quien": {"type": "string"},
+                        "duda": {"type": "string"}
+                    },
+                    "required": ["n", "habla", "a_quien", "duda"],
+                    "additionalProperties": false
+                }
+            },
             "cambios": {
                 "type": "array",
                 "items": {
@@ -136,7 +234,7 @@ fn schema() -> serde_json::Value {
                 }
             }
         },
-        "required": ["cambios"],
+        "required": ["hablantes", "cambios"],
         "additionalProperties": false
     })
 }
@@ -185,6 +283,8 @@ pub async fn review(
         .iter()
         .map(|entry| serde_json::json!({"original": entry.source, "traduccion": entry.target}))
         .collect();
+    let studied = work.page_notes();
+    let dictionary = slang();
     let skip = rejected(&work);
     let count = limit.unwrap_or(pages.len()).min(pages.len());
     eprintln!("reviewing {count} page(s)");
@@ -192,6 +292,7 @@ pub async fn review(
     let client = reqwest::Client::new();
     let endpoint = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
     let mut found = Vec::new();
+    let mut speakers = BTreeMap::new();
     for (index, blocks) in pages.iter().take(count).enumerate() {
         crate::progress(index, count, "revisión");
         let balloons: Vec<_> = blocks
@@ -202,20 +303,38 @@ pub async fn review(
         if balloons.is_empty() {
             continue;
         }
+        let note = studied.iter().find(|note| note.pagina == index + 1);
         let listed: Vec<_> = balloons
             .iter()
             .enumerate()
             .map(|(n, (block, translation))| {
-                serde_json::json!({
+                let mut balloon = serde_json::json!({
                     "n": n + 1,
                     "original": block.source,
                     "traduccion": translation.text.value,
-                })
+                });
+                if let Some(speaker) = studied_speaker(note, &block.source) {
+                    balloon["habla_segun_estudio"] = speaker.into();
+                }
+                balloon
+            })
+            .collect();
+        let page_text = balloons
+            .iter()
+            .map(|(_, translation)| translation.text.value.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let slang_here: Vec<_> = dictionary
+            .iter()
+            .filter(|entry| has_word(&page_text, &entry.word))
+            .map(|entry| {
+                serde_json::json!({"palabra": entry.word, "tipo": entry.kind, "significado": entry.meaning})
             })
             .collect();
         let user = serde_json::to_string(&serde_json::json!({
             "ficha": notes,
             "glosario": glossary,
+            "jerga": slang_here,
             "pagina": index + 1,
             "globos": listed,
         }))?;
@@ -261,6 +380,28 @@ pub async fn review(
             eprintln!("  página {}: respuesta ilegible, se omite", index + 1);
             continue;
         };
+        for said in value["hablantes"].as_array().into_iter().flatten() {
+            let Some((block, _)) = said["n"]
+                .as_u64()
+                .and_then(|n| (n as usize).checked_sub(1))
+                .and_then(|i| balloons.get(i))
+            else {
+                continue;
+            };
+            let field = |name: &str| said[name].as_str().unwrap_or_default().trim().to_owned();
+            let (speaker, listener, doubt) = (field("habla"), field("a_quien"), field("duda"));
+            if speaker.is_empty() {
+                continue;
+            }
+            let mut text = speaker;
+            if !listener.is_empty() && listener != "?" {
+                text.push_str(&format!(" → {listener}"));
+            }
+            if !doubt.is_empty() {
+                text.push_str(&format!(" (duda: {doubt})"));
+            }
+            speakers.insert(block.id.to_string(), text);
+        }
         let mut on_page = 0;
         for change in value["cambios"].as_array().into_iter().flatten() {
             let Some(n) = change["n"].as_u64().map(|n| n as usize) else {
@@ -279,7 +420,9 @@ pub async fn review(
             if skip.contains(&(id.clone(), clean(current))) {
                 continue;
             }
+            let speaker = speakers.get(&id).map(|speaker| clean(speaker)).unwrap_or_default();
             found.push(Proposal {
+                speaker,
                 id,
                 page: index + 1,
                 original: clean(&block.source),
@@ -293,18 +436,18 @@ pub async fn review(
     }
 
     let mut text = String::from(
-        "# Correcciones propuestas: id\tpágina\toriginal\tactual\tpropuesta\tmotivo\n\
+        "# Correcciones propuestas: id\tpágina\toriginal\tactual\tpropuesta\tmotivo\thabla\n\
          # Apruébalas o recházalas desde el panel.\n",
     );
     for p in &found {
         text.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\n",
-            p.id, p.page, p.original, p.current, p.proposal, p.reason
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            p.id, p.page, p.original, p.current, p.proposal, p.reason, p.speaker
         ));
     }
     std::fs::create_dir_all(work.dir())?;
     std::fs::write(proposals_path(&work), text)?;
-    write_context(&work, &pages)?;
+    write_context(&work, &pages, &speakers)?;
     println!("{} propuesta(s) en {}", found.len(), proposals_path(&work).display());
     Ok(())
 }
@@ -375,8 +518,12 @@ fn refresh_context(work: &Work, applied: &BTreeMap<String, String>) -> Result<()
     for line in text.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
         match (line.starts_with('#'), fields.as_slice()) {
-            (false, [page, id, original, _]) if applied.contains_key(*id) => {
-                out.push_str(&format!("{page}\t{id}\t{original}\t{}\n", clean(&applied[*id])));
+            (false, [page, id, original, _, rest @ ..]) if applied.contains_key(*id) => {
+                let speaker = rest.first().copied().unwrap_or_default();
+                out.push_str(&format!(
+                    "{page}\t{id}\t{original}\t{}\t{speaker}\n",
+                    clean(&applied[*id])
+                ));
             }
             _ => {
                 out.push_str(line);

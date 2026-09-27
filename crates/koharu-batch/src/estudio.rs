@@ -211,6 +211,9 @@ struct Character {
     descripcion: String,
     relaciones: String,
     habla: String,
+    /// How they talk during sex, and from which page it changes.
+    #[serde(default)]
+    habla_sexo: String,
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -218,6 +221,9 @@ struct Overview {
     genero: String,
     tono: String,
     resumen: String,
+    /// Which words to use for bodies and acts, and how crude the text is.
+    #[serde(default)]
+    registro_sexual: String,
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -241,11 +247,21 @@ y en orden de lectura. Devuelve la ficha COMPLETA actualizada: conserva lo que y
 sabías, corrígelo si el tramo nuevo lo contradice y añade lo nuevo.
 
 - obra: género, tono (cómico, romántico, sucio, dramático...) y un resumen breve de \
-lo que pasa hasta ahora.
+lo que pasa hasta ahora. En género nombra la dinámica real de la historia (infidelidad, \
+netorare, corrupción, dominación, chantaje, incesto, romance, harén, comedia...), no \
+la etiqueta más amable: si hay infidelidad o degradación, dilo.
+- registro_sexual: cómo es el sexo en esta obra y con qué palabras se traduce. Di qué \
+tan crudo es el texto y elige UNA palabra de español latino neutro para cada cosa que \
+aparezca (pene, vagina, pechos, trasero, semen, coger, correrse/venirse, mamada...), \
+según cómo hablen los personajes: si el original es vulgar, palabras vulgares (verga, \
+concha, tetas, culo, leche, coger); si es suave, suaves. Sin eufemismos que el original \
+no tenga. El traductor usará siempre esas palabras.
 - personajes: nombre tal como aparece, quién es, sus relaciones con los demás (quién \
 es hermano, madre, pareja, jefe de quién) y cómo habla (formal, vulgar, tímido, \
 cómo llama a los demás). Esto decide el registro y el género gramatical de la \
-traducción, así que sé concreto.
+traducción, así que sé concreto. En habla_sexo, cómo habla durante el sexo (gime, \
+insulta, suplica, ordena, se vuelve sumisa) y, si cambia a lo largo de la obra, desde \
+qué página; vacío si no tiene escenas.
 - terminos: palabras o expresiones que se repiten y deben traducirse siempre igual: \
 nombres propios, apodos, honoríficos (onii-chan, senpai), formas de llamarse \
 (\"big sis\"), jerga sexual recurrente y objetos importantes. Propón la traducción \
@@ -254,7 +270,8 @@ comunes que no necesitan regla.
 
 - comparacion_usuario: si recibes datos_del_usuario (etiquetas y una descripción \
 que escribió quien conoce la obra), úsalos como punto de partida: suelen ser fiables \
-en género, tono y relaciones. Compáralos con lo que muestra el texto y escribe aquí, \
+en género, tono y relaciones. guia_etiquetas explica qué implica cada etiqueta para \
+el diálogo: aplícalo en tono, registro_sexual y habla_sexo. Compáralos con lo que muestra el texto y escribe aquí, \
 en pocas líneas, en qué coinciden, qué les falta y qué contradice el texto (cita la \
 página). No cambies los datos del usuario; si el texto los contradice, la ficha sigue \
 al texto y lo dices aquí. Sin datos del usuario, déjalo vacío.
@@ -271,9 +288,10 @@ fn notes_schema() -> serde_json::Value {
                 "properties": {
                     "genero": {"type": "string"},
                     "tono": {"type": "string"},
-                    "resumen": {"type": "string"}
+                    "resumen": {"type": "string"},
+                    "registro_sexual": {"type": "string"}
                 },
-                "required": ["genero", "tono", "resumen"],
+                "required": ["genero", "tono", "resumen", "registro_sexual"],
                 "additionalProperties": false
             },
             "personajes": {
@@ -284,9 +302,10 @@ fn notes_schema() -> serde_json::Value {
                         "nombre": {"type": "string"},
                         "descripcion": {"type": "string"},
                         "relaciones": {"type": "string"},
-                        "habla": {"type": "string"}
+                        "habla": {"type": "string"},
+                        "habla_sexo": {"type": "string"}
                     },
-                    "required": ["nombre", "descripcion", "relaciones", "habla"],
+                    "required": ["nombre", "descripcion", "relaciones", "habla", "habla_sexo"],
                     "additionalProperties": false
                 }
             },
@@ -302,30 +321,36 @@ fn render_notes(name: &str, notes: &Notes, user: Option<&UserNotes>) -> String {
     let mut text = format!(
         "# Ficha: {name}\n\n\
          <!-- Generada por khr estudiar. Edítala a mano: el traductor y el corrector la leen tal cual. -->\n\n\
-         Género: {}\nTono: {}\nResumen: {}\n\n## Personajes\n",
+         Género: {}\nTono: {}\nResumen: {}\n",
         notes.obra.genero.trim(),
         notes.obra.tono.trim(),
         notes.obra.resumen.trim()
     );
+    if !notes.obra.registro_sexual.trim().is_empty() {
+        text.push_str(&format!("Registro sexual: {}\n", notes.obra.registro_sexual.trim()));
+    }
+    text.push_str("\n## Personajes\n");
     for character in &notes.personajes {
         text.push_str(&format!(
-            "- {}: {} Relaciones: {} Habla: {}\n",
+            "- {}: {} Relaciones: {} Habla: {}",
             character.nombre.trim(),
             character.descripcion.trim(),
             character.relaciones.trim(),
             character.habla.trim()
         ));
+        if !character.habla_sexo.trim().is_empty() {
+            text.push_str(&format!(" En el sexo: {}", character.habla_sexo.trim()));
+        }
+        text.push('\n');
     }
     if let Some(user) = user {
         text.push_str("\n## Lo que dice el usuario\n");
-        let tags: Vec<&str> = user
-            .etiquetas
-            .iter()
-            .map(|tag| tag.trim())
-            .filter(|tag| !tag.is_empty())
-            .collect();
-        if !tags.is_empty() {
-            text.push_str(&format!("Etiquetas: {}\n", tags.join(", ")));
+        let tags = crate::etiquetas::read(&user.etiquetas);
+        if !tags.etiquetas.is_empty() {
+            text.push_str(&format!("Etiquetas: {}\n", tags.etiquetas.join(", ")));
+        }
+        for guide in &tags.guia {
+            text.push_str(&format!("- {guide}\n"));
         }
         if !user.descripcion.trim().is_empty() {
             text.push_str(&format!("Descripción: {}\n", user.descripcion.trim()));
@@ -432,6 +457,13 @@ pub async fn study(
 
     let work = Work::of(project);
     let user_notes = work.user_notes();
+    let tags = user_notes.as_ref().map(|user| crate::etiquetas::read(&user.etiquetas));
+    if let Some(minors) = tags.as_ref().filter(|tags| !tags.menores.is_empty()) {
+        anyhow::bail!(
+            "la obra tiene etiquetas de menores ({}): no se estudia",
+            minors.menores.join(", ")
+        );
+    }
     if let Some(user) = &user_notes {
         eprintln!(
             "starting from the user's {} tag(s) and description",
@@ -448,7 +480,12 @@ pub async fn study(
             "texto": chunk,
         });
         if let Some(user) = &user_notes {
-            message["datos_del_usuario"] = serde_json::to_value(user)?;
+            let tags = crate::etiquetas::read(&user.etiquetas);
+            message["datos_del_usuario"] = serde_json::json!({
+                "etiquetas": tags.etiquetas,
+                "guia_etiquetas": tags.guia,
+                "descripcion": user.descripcion,
+            });
         }
         let user = serde_json::to_string(&message)?;
         let mut content = vec![serde_json::json!({"type": "text", "text": user})];
@@ -903,7 +940,7 @@ mod tests {
             ..Notes::default()
         };
         let user = UserNotes {
-            etiquetas: vec!["romance".to_owned(), " ".to_owned(), "oficina".to_owned()],
+            etiquetas: vec!["romance".to_owned(), " ".to_owned(), "oficina".to_owned(), "language:english".to_owned()],
             descripcion: "Pareja casada que quiere un hijo.".to_owned(),
         };
         let text = render_notes("obra", &notes, Some(&user));

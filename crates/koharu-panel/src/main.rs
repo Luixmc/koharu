@@ -23,6 +23,8 @@ const DEFAULT_CORRECTOR: &str = "gemma-4-12b-it-qat";
 /// Cydonia corrects Spanish better than Gemma (adverbs, word order), and
 /// only step 6 needs it, so it takes the memory once Gemma is gone.
 const DEFAULT_REVIEWER: &str = "thedrummer_cydonia-24b-v4.3";
+/// The model each LM Studio step last used, so the choice survives a restart.
+const MODEL_CHOICES: &str = r"I:\Koharu\panel-modelos.json";
 /// Source languages; khr picks the OCR that reads each one best.
 const LANGUAGES: [(&str, &str); 4] =
     [("ja", "Japonés"), ("ko", "Coreano"), ("zh", "Chino"), ("en", "Inglés")];
@@ -56,6 +58,8 @@ struct Correction {
     current: String,
     proposal: String,
     reason: String,
+    /// Who the reviewer took to be speaking, and to whom.
+    speaker: String,
 }
 
 /// One balloon of a reviewed page, from `revision-paginas.tsv`, to show the
@@ -65,6 +69,7 @@ struct Balloon {
     id: String,
     original: String,
     translation: String,
+    speaker: String,
 }
 
 /// One glossary line: original, rendering and an optional note.
@@ -151,6 +156,10 @@ struct Panel {
     llm_translation: bool,
     corrector: String,
     reviewer: String,
+    /// Model for the study (step 4); the reviewer's by default.
+    study_model: String,
+    /// LLMs installed in LM Studio, for the model menus.
+    models: Vec<String>,
     pages: u32,
     left_to_right: bool,
     idioma: usize,
@@ -207,6 +216,8 @@ impl Panel {
             llm_translation: true,
             corrector: DEFAULT_CORRECTOR.to_owned(),
             reviewer: DEFAULT_REVIEWER.to_owned(),
+            study_model: DEFAULT_REVIEWER.to_owned(),
+            models: Vec::new(),
             pages: 0,
             left_to_right: false,
             idioma: 0,
@@ -232,8 +243,42 @@ impl Panel {
             page_balloons: Vec::new(),
             new_term: None,
         };
+        panel.models = installed_models(&panel.lms);
+        panel.load_model_choices();
         panel.reload_projects();
         panel
+    }
+
+    fn load_model_choices(&mut self) {
+        let Some(saved) = std::fs::read_to_string(MODEL_CHOICES)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        else {
+            return;
+        };
+        let text = |key: &str| saved.get(key).and_then(|value| value.as_str()).map(str::to_owned);
+        if let Some(model) = text("estudiar") {
+            self.study_model = model;
+        }
+        if let Some(model) = text("traducir") {
+            self.corrector = model;
+        }
+        if let Some(model) = text("revisar") {
+            self.reviewer = model;
+        }
+        if let Some(local) = saved.get("traducir_local").and_then(|value| value.as_bool()) {
+            self.llm_translation = local;
+        }
+    }
+
+    fn save_model_choices(&self) {
+        let choices = serde_json::json!({
+            "estudiar": self.study_model,
+            "traducir": self.corrector,
+            "traducir_local": self.llm_translation,
+            "revisar": self.reviewer,
+        });
+        let _ = std::fs::write(MODEL_CHOICES, serde_json::to_string_pretty(&choices).unwrap_or_default());
     }
 
     fn reload_projects(&mut self) {
@@ -572,13 +617,18 @@ impl Panel {
         }
         let model = self.corrector.trim().to_owned();
         let reviewer = self.reviewer.trim().to_owned();
+        let study_model = self.study_model.trim().to_owned();
         let llm_translation = self.translate && self.llm_translation;
         if llm_translation && model.is_empty() {
-            self.status = "Escribe el modelo local.".to_owned();
+            self.status = "Elige el modelo de traducción.".to_owned();
             return false;
         }
-        if (self.study || self.review_step) && reviewer.is_empty() {
-            self.status = "Escribe el modelo corrector.".to_owned();
+        if self.study && study_model.is_empty() {
+            self.status = "Elige el modelo de la ficha.".to_owned();
+            return false;
+        }
+        if self.review_step && reviewer.is_empty() {
+            self.status = "Elige el modelo de revisión.".to_owned();
             return false;
         }
         let name = project
@@ -614,11 +664,18 @@ impl Panel {
         // Two models do not fit in 16 GB of RAM: each change frees the other.
         let mut loaded: Option<String> = None;
         if self.study {
-            self.switch_model(&mut loaded, &reviewer, &label);
+            // A gallery link left in the field is enough: its tags are
+            // fetched into usuario.json right before the study reads it.
+            let gallery = self.gallery.trim().to_owned();
+            if !gallery.is_empty() {
+                let args = ["etiquetas", "--galeria", &gallery, "--project", &project_arg];
+                self.push(&label("Traer etiquetas de la galería"), &khr, &args, true, After::Nothing);
+            }
+            self.switch_model(&mut loaded, &study_model, &label);
             if let Err(error) = self.save_user_notes() {
                 self.log(format!("No se guardaron tus etiquetas y descripción: {error}"));
             }
-            let mut args = vec!["estudiar", "--project", &project_arg, "--model", &reviewer];
+            let mut args = vec!["estudiar", "--project", &project_arg, "--model", &study_model];
             if self.left_to_right {
                 args.push("--left-to-right");
             }
@@ -652,7 +709,7 @@ impl Panel {
             if self.left_to_right {
                 args.push("--left-to-right");
             }
-            self.push(&label("6. Revisar la traducción (propuestas)"), &khr, &args, false, After::Nothing);
+            self.push(&label(&format!("6. Revisar con {reviewer}")), &khr, &args, false, After::Nothing);
         }
         if let Some(loaded) = loaded {
             let after = if self.review_step {
@@ -1203,7 +1260,10 @@ impl Panel {
                                         .on_hover_text("Sin traducir");
                                 }
                                 None => {
-                                    ui.label(&balloon.translation).on_hover_text(&balloon.original);
+                                    ui.horizontal_wrapped(|ui| {
+                                        speaker_label(ui, &balloon.speaker);
+                                        ui.label(&balloon.translation).on_hover_text(&balloon.original);
+                                    });
                                 }
                             }
                         }
@@ -1400,19 +1460,27 @@ impl eframe::App for Panel {
                     );
 
                     cols[1].strong("Opciones");
-                    cols[1].horizontal(|ui| {
-                        ui.label("Traducir con:");
-                        ui.radio_value(&mut self.llm_translation, true, "Modelo local");
-                        ui.radio_value(&mut self.llm_translation, false, "DeepL");
+                    let mut changed = false;
+                    egui::Grid::new("modelos").num_columns(2).show(&mut cols[1], |ui| {
+                        ui.label("Ficha (paso 4):");
+                        changed |= model_menu(ui, "modelo_ficha", &mut self.study_model, &self.models, None);
+                        ui.end_row();
+                        ui.label("Traducción (paso 5):");
+                        changed |= model_menu(
+                            ui,
+                            "modelo_traduccion",
+                            &mut self.corrector,
+                            &self.models,
+                            Some(&mut self.llm_translation),
+                        );
+                        ui.end_row();
+                        ui.label("Revisión (paso 6):");
+                        changed |= model_menu(ui, "modelo_revision", &mut self.reviewer, &self.models, None);
+                        ui.end_row();
                     });
-                    cols[1].horizontal(|ui| {
-                        ui.label("Traductor (paso 5):");
-                        ui.add(egui::TextEdit::singleline(&mut self.corrector).desired_width(240.0));
-                    });
-                    cols[1].horizontal(|ui| {
-                        ui.label("Ficha y corrector (4 y 6):");
-                        ui.add(egui::TextEdit::singleline(&mut self.reviewer).desired_width(240.0));
-                    });
+                    if changed {
+                        self.save_model_choices();
+                    }
                     cols[1].horizontal(|ui| {
                         ui.label("Páginas (0 = todas):");
                         ui.add(egui::DragValue::new(&mut self.pages).range(0..=9999));
@@ -1664,6 +1732,7 @@ fn read_corrections(path: &Path) -> Vec<Correction> {
                 current: fields.next()?.to_owned(),
                 proposal: fields.next()?.to_owned(),
                 reason: fields.next().unwrap_or_default().to_owned(),
+                speaker: fields.next().unwrap_or_default().to_owned(),
             })
         })
         .collect()
@@ -1671,18 +1740,19 @@ fn read_corrections(path: &Path) -> Vec<Correction> {
 
 fn write_corrections(path: &Path, corrections: &[Correction]) -> std::io::Result<()> {
     let mut text = String::from(
-        "# Correcciones propuestas: id\tpágina\toriginal\tactual\tpropuesta\tmotivo\n\
+        "# Correcciones propuestas: id\tpágina\toriginal\tactual\tpropuesta\tmotivo\thabla\n\
          # Apruébalas o recházalas desde el panel.\n",
     );
     for c in corrections {
         text.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             c.id,
             c.page,
             c.original,
             c.current,
             c.proposal.replace(['\t', '\n'], " "),
-            c.reason
+            c.reason,
+            c.speaker
         ));
     }
     std::fs::write(path, text)
@@ -1698,9 +1768,32 @@ fn read_balloons(path: &Path) -> Vec<Balloon> {
                 id: fields.next()?.to_owned(),
                 original: fields.next()?.to_owned(),
                 translation: fields.next().unwrap_or_default().to_owned(),
+                speaker: fields.next().unwrap_or_default().to_owned(),
             })
         })
         .collect()
+}
+
+/// Who speaks a balloon, as the reviewer read it, before its text; in orange
+/// when the reviewer was unsure, so a proposal built on it is read with care.
+fn speaker_label(ui: &mut egui::Ui, speaker: &str) {
+    if speaker.is_empty() {
+        return;
+    }
+    let (name, doubt) = match speaker.split_once(" (duda: ") {
+        Some((name, doubt)) => (name, Some(doubt.trim_end_matches(')'))),
+        None => (speaker, None),
+    };
+    let text = egui::RichText::new(format!("[{name}]")).small();
+    match doubt {
+        Some(doubt) => {
+            ui.label(text.color(egui::Color32::from_rgb(230, 140, 40)))
+                .on_hover_text(format!("El revisor no está seguro: {doubt}"));
+        }
+        None => {
+            ui.label(text.weak()).on_hover_text("Quién habla y a quién, según el revisor");
+        }
+    }
 }
 
 /// A proposal inside its page: the original, the line as it is with what
@@ -1723,7 +1816,10 @@ fn correction_card(
         .inner_margin(8.0)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(egui::RichText::new(&correction.original).weak());
+            ui.horizontal_wrapped(|ui| {
+                speaker_label(ui, &correction.speaker);
+                ui.label(egui::RichText::new(&correction.original).weak());
+            });
             let pieces = word_diff(&correction.current, &correction.proposal);
             ui.horizontal_top(|ui| {
                 ui.label(egui::RichText::new("Ahora:").strong());
@@ -1928,4 +2024,59 @@ mod tests {
         assert!((59..=61).contains(&left), "{left}");
         assert_eq!(short_duration(Duration::from_secs(125)), "2 min 05 s");
     }
+}
+
+/// The LLMs LM Studio has downloaded, by the key `lms load` takes.
+fn installed_models(lms: &Path) -> Vec<String> {
+    let Ok(output) = Command::new(lms).args(["ls", "--json"]).creation_flags(CREATE_NO_WINDOW).output() else {
+        return Vec::new();
+    };
+    let listed: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    let mut models: Vec<String> = listed
+        .iter()
+        .filter(|model| model.get("type").and_then(|kind| kind.as_str()) == Some("llm"))
+        .filter_map(|model| model.get("modelKey").and_then(|key| key.as_str()).map(str::to_owned))
+        .collect();
+    models.sort();
+    models
+}
+
+/// A menu with the installed models for one step; the translation menu also
+/// offers DeepL, which clears `local`. Returns whether the choice changed.
+fn model_menu(
+    ui: &mut egui::Ui,
+    id: &str,
+    model: &mut String,
+    models: &[String],
+    mut local: Option<&mut bool>,
+) -> bool {
+    const DEEPL: &str = "DeepL (en línea)";
+    let on_deepl = local.as_deref().is_some_and(|local| !*local);
+    let shown = if on_deepl { DEEPL.to_owned() } else { model.clone() };
+    let mut changed = false;
+    egui::ComboBox::from_id_salt(id).selected_text(shown).width(260.0).show_ui(ui, |ui| {
+        if let Some(local) = local.as_deref_mut() {
+            if ui.selectable_label(!*local, DEEPL).clicked() && *local {
+                *local = false;
+                changed = true;
+            }
+        }
+        // A saved model that is no longer installed stays visible, so the
+        // menu never shows a choice that differs from what would run.
+        let mut listed: Vec<String> = models.to_vec();
+        if !model.is_empty() && !models.contains(model) {
+            listed.push(model.clone());
+        }
+        for name in listed {
+            let chosen = !on_deepl && name == *model;
+            if ui.selectable_label(chosen, name.as_str()).clicked() && !chosen {
+                *model = name;
+                if let Some(local) = local.as_deref_mut() {
+                    *local = true;
+                }
+                changed = true;
+            }
+        }
+    });
+    changed
 }

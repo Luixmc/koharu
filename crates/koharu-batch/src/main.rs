@@ -20,6 +20,7 @@ use koharu_translator::ProvidersConfig;
 
 mod escenas;
 mod estudio;
+mod etiquetas;
 mod galeria;
 mod obra;
 mod revision;
