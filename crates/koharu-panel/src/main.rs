@@ -36,8 +36,12 @@ const STAGES: [(&str, &str); 3] = [
 /// What to do once a step exits successfully.
 enum After {
     Nothing,
-    ShowProposals,
-    ShowCorrections,
+    /// Open the proposals of this project (if it is still the selected one).
+    ShowProposals(PathBuf),
+    /// Open the corrections of this project (if it is still the selected one).
+    ShowCorrections(PathBuf),
+    /// Approve the proposals of this work folder (study → translate).
+    ApproveProposals(PathBuf),
 }
 
 /// One proposed correction from `khr revisar`.
@@ -254,11 +258,13 @@ impl Panel {
         self.load_glossary();
         self.load_corrections();
         self.load_user_notes();
-        self.status = self
-            .project()
-            .and_then(Path::file_stem)
-            .map(|name| format!("Proyecto: {}", name.to_string_lossy()))
-            .unwrap_or_default();
+        // While a step runs the status line belongs to it, not to the selection.
+        if self.current.is_none() {
+            self.status = self
+                .project()
+                .map(|project| format!("Proyecto: {}", project_name(project)))
+                .unwrap_or_default();
+        }
     }
 
     /// Projects named "... JA", "... KO", "... ZH" or "... EN" set the source
@@ -482,14 +488,37 @@ impl Panel {
     fn finish(&mut self, after: After) {
         match after {
             After::Nothing => {}
-            After::ShowProposals => {
-                self.load_glossary();
-                self.glossary_open = !self.proposals.is_empty();
+            After::ShowProposals(project) => {
+                if self.project() == Some(project.as_path()) {
+                    self.load_glossary();
+                    self.glossary_open = !self.proposals.is_empty();
+                } else {
+                    let dir = Path::new(WORKS_DIR).join(log_base(&project));
+                    let pending = read_terms(&dir.join("propuestas.tsv")).len();
+                    if pending > 0 {
+                        self.log(format!(
+                            "[{}] {pending} término(s) por aprobar: elige ese proyecto para verlos.",
+                            project_name(&project)
+                        ));
+                    }
+                }
             }
-            After::ShowCorrections => {
-                self.load_corrections();
-                self.corrections_open = !self.corrections.is_empty();
+            After::ShowCorrections(project) => {
+                if self.project() == Some(project.as_path()) {
+                    self.load_corrections();
+                    self.corrections_open = !self.corrections.is_empty();
+                } else {
+                    let dir = Path::new(WORKS_DIR).join(log_base(&project));
+                    let pending = read_corrections(&dir.join("correcciones.tsv")).len();
+                    if pending > 0 {
+                        self.log(format!(
+                            "[{}] {pending} corrección(es) por revisar: elige ese proyecto para verlas.",
+                            project_name(&project)
+                        ));
+                    }
+                }
             }
+            After::ApproveProposals(dir) => self.approve_all_in(&dir),
         }
     }
 
@@ -580,7 +609,13 @@ impl Panel {
             if self.left_to_right {
                 args.push("--left-to-right");
             }
-            self.push(&label("4. Estudiar la obra (ficha y términos)"), &khr, &args, false, After::Nothing);
+            // Translating right after studying: the new terms go in approved.
+            let after = if self.translate {
+                After::ApproveProposals(Path::new(WORKS_DIR).join(log_base(&project)))
+            } else {
+                After::Nothing
+            };
+            self.push(&label("4. Estudiar la obra (ficha y términos)"), &khr, &args, false, after);
         }
         if self.translate && self.llm_translation {
             let mut args = vec![
@@ -606,9 +641,9 @@ impl Panel {
         }
         if uses_llm {
             let after = if self.review_step {
-                After::ShowCorrections
+                After::ShowCorrections(project.clone())
             } else if self.study {
-                After::ShowProposals
+                After::ShowProposals(project.clone())
             } else {
                 After::Nothing
             };
@@ -630,21 +665,23 @@ impl Panel {
         let khr = self.khr.clone();
         let lms = self.lms.clone();
         let project_arg = project.display().to_string();
-        self.push("Iniciar servidor de LM Studio", &lms, &["server", "start"], true, After::Nothing);
-        self.push(&format!("Cargar {model}"), &khr, &["models", "load", &model], false, After::Nothing);
+        let name = project_name(&project);
+        let label = |step: &str| format!("[{name}] {step}");
+        self.push(&label("Iniciar servidor de LM Studio"), &lms, &["server", "start"], true, After::Nothing);
+        self.push(&label(&format!("Cargar {model}")), &khr, &["models", "load", &model], false, After::Nothing);
         self.push(
-            "Aprender de mis correcciones",
+            &label("Aprender de mis correcciones"),
             &khr,
             &["aprender", "--project", &project_arg, "--model", &model],
             false,
             After::Nothing,
         );
         self.push(
-            "Liberar modelo de LM Studio",
+            &label("Liberar modelo de LM Studio"),
             &khr,
             &["models", "unload", &model],
             true,
-            After::ShowProposals,
+            After::ShowProposals(project.clone()),
         );
         self.begin(ctx);
     }
@@ -776,25 +813,27 @@ impl Panel {
             return;
         }
         let term = self.proposals.remove(index);
-        let target = if approve { "glosario.tsv" } else { "rechazados.tsv" };
-        let _ = std::fs::create_dir_all(&dir);
-        let mut kept = read_terms(&dir.join(target));
-        kept.retain(|existing| existing.source.to_lowercase() != term.source.to_lowercase());
-        kept.push(term);
-        let header = if approve {
-            "# Glosario de esta obra: original<TAB>traducción<TAB>nota. Manda sobre el global.\n"
-        } else {
-            "# Términos rechazados: khr no volverá a proponerlos.\n"
-        };
-        let pending_header = "# Propuestas pendientes: original<TAB>traducción<TAB>nota\n\
-                              # Apruébalas o recházalas desde el panel.\n";
-        let written = write_terms(&dir.join(target), header, &kept)
-            .and_then(|()| write_terms(&dir.join("propuestas.tsv"), pending_header, &self.proposals));
-        if let Err(error) = written {
-            self.status = format!("No se pudo guardar el glosario: {error}");
+        match move_terms(&dir, vec![term], approve, &self.proposals) {
+            Ok(kept) if approve => self.approved = kept,
+            Ok(_) => {}
+            Err(error) => self.status = format!("No se pudo guardar el glosario: {error}"),
         }
-        if approve {
-            self.approved = kept.len();
+    }
+
+    /// Approves every pending proposal of the work in `dir`, used when
+    /// studying is followed by translating so the new terms are in force.
+    fn approve_all_in(&mut self, dir: &Path) {
+        let pending = read_terms(&dir.join("propuestas.tsv"));
+        if pending.is_empty() {
+            return;
+        }
+        let count = pending.len();
+        match move_terms(dir, pending, true, &[]) {
+            Ok(_) => self.log(format!("{count} término(s) propuestos aprobados solos antes de traducir.")),
+            Err(error) => self.log(format!("No se pudieron aprobar los términos propuestos: {error}")),
+        }
+        if self.work_dir().as_deref() == Some(dir) {
+            self.load_glossary();
         }
     }
 
@@ -1021,7 +1060,7 @@ impl Panel {
         let khr = self.khr.clone();
         let project_arg = project.display().to_string();
         self.push(
-            "Aplicar correcciones aprobadas",
+            &format!("[{}] Aplicar correcciones aprobadas", project_name(&project)),
             &khr,
             &["aplicar", "--project", &project_arg],
             false,
@@ -1042,7 +1081,8 @@ impl Panel {
         if self.left_to_right {
             args.push("--left-to-right");
         }
-        self.push("Leer las páginas de las correcciones", &khr, &args, true, After::ShowCorrections);
+        let name = format!("[{}] Leer las páginas de las correcciones", project_name(&project));
+        self.push(&name, &khr, &args, true, After::ShowCorrections(project.clone()));
         self.begin(ctx);
     }
 
@@ -1423,6 +1463,10 @@ impl eframe::App for Panel {
                     self.cancel_queued(&name);
                 }
             }
+            if let Some(step) = &self.current {
+                // The running step names its own project, whatever is selected.
+                ui.label(egui::RichText::new(format!("En curso: {}", step.name)).strong());
+            }
             if busy {
                 let elapsed = short_duration(self.step_started.elapsed());
                 match &self.progress {
@@ -1512,6 +1556,29 @@ fn read_terms(path: &Path) -> Vec<Term> {
             (!source.is_empty() && !target.is_empty()).then_some(Term { source, target, note })
         })
         .collect()
+}
+
+/// Moves `terms` into the work's glossary (or its rejected list), replacing
+/// entries with the same original, and leaves `pending` as the proposals.
+/// Returns how many terms the target file now holds.
+fn move_terms(dir: &Path, terms: Vec<Term>, approve: bool, pending: &[Term]) -> std::io::Result<usize> {
+    let target = if approve { "glosario.tsv" } else { "rechazados.tsv" };
+    std::fs::create_dir_all(dir)?;
+    let mut kept = read_terms(&dir.join(target));
+    for term in terms {
+        kept.retain(|existing| existing.source.to_lowercase() != term.source.to_lowercase());
+        kept.push(term);
+    }
+    let header = if approve {
+        "# Glosario de esta obra: original<TAB>traducción<TAB>nota. Manda sobre el global.\n"
+    } else {
+        "# Términos rechazados: khr no volverá a proponerlos.\n"
+    };
+    let pending_header = "# Propuestas pendientes: original<TAB>traducción<TAB>nota\n\
+                          # Apruébalas o recházalas desde el panel.\n";
+    write_terms(&dir.join(target), header, &kept)?;
+    write_terms(&dir.join("propuestas.tsv"), pending_header, pending)?;
+    Ok(kept.len())
 }
 
 fn write_terms(path: &Path, header: &str, terms: &[Term]) -> std::io::Result<()> {
@@ -1711,6 +1778,10 @@ fn diff_job(ui: &egui::Ui, pieces: &[(Piece, String)], side: Piece) -> egui::tex
         job.append(text, 0.0, format);
     }
     job
+}
+
+fn project_name(project: &Path) -> String {
+    project.file_stem().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 fn log_base(project: &Path) -> String {
