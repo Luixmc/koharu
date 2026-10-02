@@ -35,44 +35,149 @@ const MINORS: [&str; 9] = [
 ];
 
 const GUIDES: [(&str, &str); 38] = [
-    ("netorare", "infidelidad desde el engañado: humillación, celos, culpa; el amante suele hablar con burla y superioridad"),
-    ("cheating", "infidelidad: culpa y excusas al principio, descaro después; no suavizar"),
-    ("netori", "alguien roba la pareja de otro: el que roba habla con seguridad y desprecio hacia el engañado"),
-    ("netorase", "el engañado lo consiente o lo pide: mezcla de celos y excitación"),
-    ("mind break", "el habla cambia a lo largo de la obra: de pudorosa o firme a vulgar, sumisa y entrecortada; anotar desde qué página"),
-    ("corruption", "caída progresiva: vocabulario cada vez más sucio y sumiso; anotar el cambio por páginas"),
+    (
+        "netorare",
+        "infidelidad desde el engañado: humillación, celos, culpa; el amante suele hablar con burla y superioridad",
+    ),
+    (
+        "cheating",
+        "infidelidad: culpa y excusas al principio, descaro después; no suavizar",
+    ),
+    (
+        "netori",
+        "alguien roba la pareja de otro: el que roba habla con seguridad y desprecio hacia el engañado",
+    ),
+    (
+        "netorase",
+        "el engañado lo consiente o lo pide: mezcla de celos y excitación",
+    ),
+    (
+        "mind break",
+        "el habla cambia a lo largo de la obra: de pudorosa o firme a vulgar, sumisa y entrecortada; anotar desde qué página",
+    ),
+    (
+        "corruption",
+        "caída progresiva: vocabulario cada vez más sucio y sumiso; anotar el cambio por páginas",
+    ),
     ("drugs", "habla confusa o arrastrada bajo efecto de drogas"),
-    ("sole female", "una sola mujer: el género gramatical de la segunda persona casi siempre es femenino"),
-    ("sole male", "un solo hombre: el género gramatical de la segunda persona casi siempre es masculino"),
-    ("milf", "mujer madura: habla adulta, a veces maternal o autoritaria; los jóvenes pueden tratarla de usted al inicio"),
+    (
+        "sole female",
+        "una sola mujer: el género gramatical de la segunda persona casi siempre es femenino",
+    ),
+    (
+        "sole male",
+        "un solo hombre: el género gramatical de la segunda persona casi siempre es masculino",
+    ),
+    (
+        "milf",
+        "mujer madura: habla adulta, a veces maternal o autoritaria; los jóvenes pueden tratarla de usted al inicio",
+    ),
     ("mature", "personajes maduros: registro adulto"),
-    ("teacher", "docente: trato de usted o \"profesora/profesor\" por parte de los demás"),
-    ("slave", "esclavitud sexual: tratamiento de amo/ama; la esclava habla con sumisión (\"sí, amo\")"),
-    ("dominatrix", "ella domina: órdenes cortas, desprecio, apodos humillantes"),
-    ("femdom", "ella domina: órdenes cortas, desprecio, apodos humillantes"),
-    ("humiliation", "humillación: insultos y apodos degradantes; traducirlos con la misma dureza"),
-    ("exhibitionism", "exhibicionismo: miedo a ser descubiertos, susurros, frases cortadas"),
-    ("public use", "uso en público: varios hombres, órdenes y burlas en grupo"),
-    ("gangbang", "varios hombres: muchas voces cortas; distinguir quién habla por los globos vecinos"),
-    ("prostitution", "prostitución: trato de cliente, precios, lenguaje de negocio mezclado con sexo"),
-    ("blackmail", "chantaje: amenazas frías de un lado, miedo y resistencia del otro"),
-    ("rape", "sexo no consentido: resistencia, súplicas y amenazas; no suavizar ni volverlo consentido"),
-    ("ahegao", "gemidos y frases rotas: repetir sílabas, cortar palabras, sin gramática completa"),
-    ("dirty talk", "hablan sucio a propósito: vocabulario explícito, sin eufemismos"),
-    ("impregnation", "embarazar: \"preñar\", \"llenar\", \"echar adentro\"; mantener el mismo verbo"),
-    ("pregnant", "embarazo: \"panza\", \"embarazada\", \"preñada\" en boca vulgar"),
+    (
+        "teacher",
+        "docente: trato de usted o \"profesora/profesor\" por parte de los demás",
+    ),
+    (
+        "slave",
+        "esclavitud sexual: tratamiento de amo/ama; la esclava habla con sumisión (\"sí, amo\")",
+    ),
+    (
+        "dominatrix",
+        "ella domina: órdenes cortas, desprecio, apodos humillantes",
+    ),
+    (
+        "femdom",
+        "ella domina: órdenes cortas, desprecio, apodos humillantes",
+    ),
+    (
+        "humiliation",
+        "humillación: insultos y apodos degradantes; traducirlos con la misma dureza",
+    ),
+    (
+        "exhibitionism",
+        "exhibicionismo: miedo a ser descubiertos, susurros, frases cortadas",
+    ),
+    (
+        "public use",
+        "uso en público: varios hombres, órdenes y burlas en grupo",
+    ),
+    (
+        "gangbang",
+        "varios hombres: muchas voces cortas; distinguir quién habla por los globos vecinos",
+    ),
+    (
+        "prostitution",
+        "prostitución: trato de cliente, precios, lenguaje de negocio mezclado con sexo",
+    ),
+    (
+        "blackmail",
+        "chantaje: amenazas frías de un lado, miedo y resistencia del otro",
+    ),
+    (
+        "rape",
+        "sexo no consentido: resistencia, súplicas y amenazas; no suavizar ni volverlo consentido",
+    ),
+    (
+        "ahegao",
+        "gemidos y frases rotas: repetir sílabas, cortar palabras, sin gramática completa",
+    ),
+    (
+        "dirty talk",
+        "hablan sucio a propósito: vocabulario explícito, sin eufemismos",
+    ),
+    (
+        "impregnation",
+        "embarazar: \"preñar\", \"llenar\", \"echar adentro\"; mantener el mismo verbo",
+    ),
+    (
+        "pregnant",
+        "embarazo: \"panza\", \"embarazada\", \"preñada\" en boca vulgar",
+    ),
     ("lactation", "leche materna: \"leche\", \"ordeñar\""),
-    ("anal", "sexo anal: \"culo\", \"por atrás\"; mantener la misma palabra en toda la obra"),
-    ("paizuri", "paja con las tetas: usar siempre la misma expresión (\"rusa\" o \"entre las tetas\")"),
-    ("fellatio", "sexo oral a él: \"mamada\", \"chupar\"; mantener la misma palabra"),
-    ("cunnilingus", "sexo oral a ella: \"comer\", \"lamer\"; mantener la misma palabra"),
-    ("big penis", "se habla del tamaño: \"verga enorme\", comparaciones con la pareja"),
-    ("piercing", "piercings (en pezones, clítoris, lengua...): nombrarlos igual en toda la obra"),
-    ("tattoo", "tatuajes, a veces con texto obsceno: traducir el texto del tatuaje si aparece"),
-    ("incest", "incesto: los títulos familiares (mamá, hijo, hermana) se mantienen siempre, también en el sexo"),
-    ("inseki", "familia política (suegra, cuñada...): mantener el título familiar"),
-    ("harem", "harén: varias mujeres alrededor de un hombre; cada una con su forma de hablar"),
-    ("vanilla", "sexo consentido y cariñoso: tono afectuoso, sin insultos"),
+    (
+        "anal",
+        "sexo anal: \"culo\", \"por atrás\"; mantener la misma palabra en toda la obra",
+    ),
+    (
+        "paizuri",
+        "paja con las tetas: usar siempre la misma expresión (\"rusa\" o \"entre las tetas\")",
+    ),
+    (
+        "fellatio",
+        "sexo oral a él: \"mamada\", \"chupar\"; mantener la misma palabra",
+    ),
+    (
+        "cunnilingus",
+        "sexo oral a ella: \"comer\", \"lamer\"; mantener la misma palabra",
+    ),
+    (
+        "big penis",
+        "se habla del tamaño: \"verga enorme\", comparaciones con la pareja",
+    ),
+    (
+        "piercing",
+        "piercings (en pezones, clítoris, lengua...): nombrarlos igual en toda la obra",
+    ),
+    (
+        "tattoo",
+        "tatuajes, a veces con texto obsceno: traducir el texto del tatuaje si aparece",
+    ),
+    (
+        "incest",
+        "incesto: los títulos familiares (mamá, hijo, hermana) se mantienen siempre, también en el sexo",
+    ),
+    (
+        "inseki",
+        "familia política (suegra, cuñada...): mantener el título familiar",
+    ),
+    (
+        "harem",
+        "harén: varias mujeres alrededor de un hombre; cada una con su forma de hablar",
+    ),
+    (
+        "vanilla",
+        "sexo consentido y cariñoso: tono afectuoso, sin insultos",
+    ),
 ];
 
 /// What the tags say, ready for the study.
@@ -144,10 +249,12 @@ fn read_with(tags: &[String], extra: &BTreeMap<String, String>, stops: &[String]
         {
             continue;
         }
-        let guide = extra
-            .get(name)
-            .map(String::as_str)
-            .or_else(|| GUIDES.iter().find(|(known, _)| *known == name).map(|(_, guide)| *guide));
+        let guide = extra.get(name).map(String::as_str).or_else(|| {
+            GUIDES
+                .iter()
+                .find(|(known, _)| *known == name)
+                .map(|(_, guide)| *guide)
+        });
         if guide == Some("-") {
             continue;
         }
@@ -197,7 +304,15 @@ mod tests {
             &BTreeMap::new(),
             &[],
         );
-        assert_eq!(reading.etiquetas, ["big breasts (ella)", "netorare (ella)", "netorare (él)", "mind break (ella)"]);
+        assert_eq!(
+            reading.etiquetas,
+            [
+                "big breasts (ella)",
+                "netorare (ella)",
+                "netorare (él)",
+                "mind break (ella)"
+            ]
+        );
         assert_eq!(reading.guia.len(), 2);
         assert!(reading.guia[0].starts_with("netorare: infidelidad"));
         assert!(reading.menores.is_empty());
@@ -207,12 +322,17 @@ mod tests {
     fn the_users_file_adds_and_drops_guides() {
         let extra = BTreeMap::from([
             ("big breasts".to_owned(), "-".to_owned()),
-            ("tankoubon".to_owned(), "recopilación: varias historias".to_owned()),
+            (
+                "tankoubon".to_owned(),
+                "recopilación: varias historias".to_owned(),
+            ),
         ]);
-        let reading = read_with(&tags(&["female:big breasts", "other:tankoubon"]), &extra, &[]);
+        let reading = read_with(
+            &tags(&["female:big breasts", "other:tankoubon"]),
+            &extra,
+            &[],
+        );
         assert_eq!(reading.etiquetas, ["tankoubon"]);
         assert_eq!(reading.guia, ["tankoubon: recopilación: varias historias"]);
     }
-
-
 }

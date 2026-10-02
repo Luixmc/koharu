@@ -15,7 +15,10 @@ use futures::StreamExt as _;
 use koharu_pipeline::{
     Committer, OcrModel, Pipeline, PipelineConfig, Progress, Request, Scope, Stage, StageOutput,
 };
-use koharu_scene::{Authored, Session, SourceText, Translation};
+use koharu_scene::{
+    Authored, DetectionAnalysis, EntityId, RasterLayer, RasterLayerKind, Session, Snapshot,
+    SourceText, Translation,
+};
 use koharu_translator::ProvidersConfig;
 
 mod escenas;
@@ -196,6 +199,11 @@ enum Command {
         /// Only these pages, counted from 1 (e.g. 6,7,24).
         #[arg(long, value_name = "N,N", value_delimiter = ',')]
         solo: Vec<usize>,
+
+        /// Skip the pages each stage already finished, to resume a run that
+        /// was cut short (power cut, closed panel) without redoing them.
+        #[arg(long)]
+        pendientes: bool,
     },
 
     /// Remove everything detection wrote on the pages (regions, text, layers),
@@ -514,7 +522,8 @@ async fn export(
         .with_context(|| format!("failed to open {}", project.display()))?;
     let snapshot = session.snapshot();
     let mut report = String::from("pagina\tligado\tletra\tx\ty\tancho\talto\tchars\ttexto\n");
-    let renderer = koharu_renderer::Renderer::from_config(koharu_renderer::TypesettingConfig::load()?)?;
+    let renderer =
+        koharu_renderer::Renderer::from_config(koharu_renderer::TypesettingConfig::load()?)?;
     let rasterizer = koharu_rasterizer::Rasterizer::new()?;
     std::fs::create_dir_all(out)?;
     let all: Vec<_> = snapshot.pages().map(|page| page.id()).collect();
@@ -555,7 +564,10 @@ async fn export(
             }
         }
         let image = rasterizer
-            .rasterize(&frame.raster_frame()?, koharu_rasterizer::RasterOptions::default())?
+            .rasterize(
+                &frame.raster_frame()?,
+                koharu_rasterizer::RasterOptions::default(),
+            )?
             .image;
         let path = out.join(format!("{:03}.png", index + 1));
         image.save(&path)?;
@@ -608,7 +620,10 @@ async fn clean(project: &std::path::Path, limit: Option<usize>, solo: &[usize]) 
         .with_context(|| format!("failed to open {}", project.display()))?;
     let snapshot = session.snapshot();
     let all: Vec<_> = snapshot.pages().map(|page| page.id()).collect();
-    let pages: Vec<_> = pick_pages(&all, limit, solo).into_iter().map(|(_, page)| page).collect();
+    let pages: Vec<_> = pick_pages(&all, limit, solo)
+        .into_iter()
+        .map(|(_, page)| page)
+        .collect();
     let count = pages.len();
     let mut removed = 0;
     let patch = snapshot.patch(|edit| {
@@ -645,7 +660,9 @@ fn pick_pages<T: Copy>(all: &[T], limit: Option<usize>, solo: &[usize]) -> Vec<(
     if solo.is_empty() {
         picked.take(limit.unwrap_or(all.len())).collect()
     } else {
-        picked.filter(|(index, _)| solo.contains(&(index + 1))).collect()
+        picked
+            .filter(|(index, _)| solo.contains(&(index + 1)))
+            .collect()
     }
 }
 
@@ -685,8 +702,12 @@ fn pipeline_config(
     vision: bool,
     with_pages: bool,
 ) -> Result<(PipelineConfig, ProvidersConfig)> {
-    let mut pipeline = koharu_config::load::<PipelineConfig>("pipeline")?.read()?.clone();
-    let mut providers = koharu_config::load::<ProvidersConfig>("providers")?.read()?.clone();
+    let mut pipeline = koharu_config::load::<PipelineConfig>("pipeline")?
+        .read()?
+        .clone();
+    let mut providers = koharu_config::load::<ProvidersConfig>("providers")?
+        .read()?
+        .clone();
     let work = obra::Work::of(project);
     pipeline.translation.work_notes = work.notes();
     pipeline.translation.glossary = work.glossary()?;
@@ -730,6 +751,7 @@ async fn run(
     ocr: Option<OcrModel>,
     text_detector: bool,
     solo: &[usize],
+    only_pending: bool,
 ) -> Result<()> {
     anyhow::ensure!(
         !vision || translator.is_some(),
@@ -743,7 +765,10 @@ async fn run(
         .with_context(|| format!("failed to open {}", project.display()))?;
 
     let all: Vec<_> = session.snapshot().pages().map(|page| page.id()).collect();
-    let pages: Vec<_> = pick_pages(&all, limit, solo).into_iter().map(|(_, page)| page).collect();
+    let pages: Vec<_> = pick_pages(&all, limit, solo)
+        .into_iter()
+        .map(|(_, page)| page)
+        .collect();
     anyhow::ensure!(!pages.is_empty(), "project has no pages");
     eprintln!(
         "running {} stage(s) over {} page(s)",
@@ -788,7 +813,11 @@ async fn run(
             eprintln!(
                 "translation context: {} notes, {terms} glossary term(s), {studied} studied page(s), {}",
                 if notes { "with" } else { "without" },
-                if vision { "with page images" } else { "text only" }
+                if vision {
+                    "with page images"
+                } else {
+                    "text only"
+                }
             );
         }
         let pipeline = Pipeline::from_config(
@@ -797,6 +826,22 @@ async fn run(
             koharu_ml::device(cpu),
         )?;
         let snapshot = session.snapshot();
+        let pages = if only_pending {
+            let pending = pending_pages(&snapshot, &pages, stage)?;
+            if pending.len() < pages.len() {
+                eprintln!(
+                    "{stage}: {} of {} page(s) already done, skipped",
+                    pages.len() - pending.len(),
+                    pages.len()
+                );
+            }
+            if pending.is_empty() {
+                continue;
+            }
+            pending
+        } else {
+            pages.clone()
+        };
         let mut committer = SessionCommitter(&mut session);
         let page_count = pages.len();
         let finished = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -811,7 +856,8 @@ async fn run(
                     progress: Some(Arc::new(move |event| {
                         if let Progress::Finished { stage, elapsed, .. } = event {
                             eprintln!("  {stage} {:.2}s", elapsed.as_secs_f64());
-                            let done = finished.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                            let done =
+                                finished.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                             progress(done.min(page_count), page_count, &label);
                         }
                     })),
@@ -830,8 +876,52 @@ async fn run(
             started.elapsed().as_secs_f64()
         );
     }
-    eprintln!("all stages finished in {:.2}s", total.elapsed().as_secs_f64());
+    eprintln!(
+        "all stages finished in {:.2}s",
+        total.elapsed().as_secs_f64()
+    );
     Ok(())
+}
+
+/// The pages `stage` has not finished yet. Each stage commits page by page,
+/// so after a cut the finished pages carry its output: detection labels,
+/// recognized text, translations, or the cleanup layer of the inpainting.
+fn pending_pages(snapshot: &Snapshot, pages: &[EntityId], stage: Stage) -> Result<Vec<EntityId>> {
+    let mut pending = Vec::new();
+    for &page in pages {
+        let mut detected = false;
+        let mut cleaned = false;
+        let mut unread = false;
+        let mut untranslated = false;
+        for entity in snapshot.descendants(page)? {
+            let id = entity.id();
+            detected |= entity.component::<DetectionAnalysis>()?.is_some();
+            cleaned |= entity
+                .component::<RasterLayer>()?
+                .is_some_and(|layer| layer.kind == RasterLayerKind::Cleanup);
+            let Ok(content) = snapshot.text_content(id) else {
+                continue;
+            };
+            match content.source()? {
+                Some(source) if !source.text.value.trim().is_empty() => {
+                    untranslated |= content
+                        .translation()?
+                        .is_none_or(|translation| translation.text.value.trim().is_empty());
+                }
+                _ => unread = true,
+            }
+        }
+        let done = match stage {
+            Stage::Detection => detected,
+            Stage::Ocr => detected && !unread,
+            Stage::Translation => detected && !unread && !untranslated,
+            Stage::Inpainting => cleaned,
+        };
+        if !done {
+            pending.push(page);
+        }
+    }
+    Ok(pending)
 }
 
 #[tokio::main]
@@ -854,6 +944,7 @@ async fn main() -> Result<()> {
             idioma,
             ocr,
             solo,
+            pendientes,
         } => {
             // Whole-balloon text blocks (comic-text-and-bubble-detector);
             // it found every balloon of the test page in all four languages.
@@ -875,6 +966,7 @@ async fn main() -> Result<()> {
                 ocr,
                 text_detector,
                 &solo,
+                pendientes,
             )
             .await
         }
@@ -1321,8 +1413,7 @@ async fn post(
     // its own carries no scene. "I'm leaving" is a farewell or a climax
     // depending on the panels around it, and a corrector handed one isolated
     // string has no way to tell them apart; handed the page, it does.
-    let page_ids: std::collections::BTreeSet<_> =
-        snapshot.pages().map(|page| page.id()).collect();
+    let page_ids: std::collections::BTreeSet<_> = snapshot.pages().map(|page| page.id()).collect();
     let mut by_page: BTreeMap<usize, Vec<(usize, koharu_scene::EntityId, String, Translation)>> =
         BTreeMap::new();
     let page_order: BTreeMap<_, _> = snapshot
@@ -1410,7 +1501,11 @@ async fn post(
                 .collect::<Vec<_>>()
         })
         .collect();
-    let pending: Vec<_> = batches.iter().flat_map(|(_, chunk)| chunk).cloned().collect();
+    let pending: Vec<_> = batches
+        .iter()
+        .flat_map(|(_, chunk)| chunk)
+        .cloned()
+        .collect();
     let page_context = work.page_context();
     if !page_context.is_empty() {
         eprintln!("{} studied page(s) in context", page_context.len());
@@ -1423,7 +1518,10 @@ async fn post(
     if unplaced > 0 {
         eprintln!("{unplaced} block(s) belong to no page and were skipped");
     }
-    eprintln!("correcting {} block(s) in batches of {batch}", pending.len());
+    eprintln!(
+        "correcting {} block(s) in batches of {batch}",
+        pending.len()
+    );
 
     let client = reqwest::Client::new();
     let endpoint = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
@@ -1527,7 +1625,10 @@ async fn post(
             accepted.push((*id, translation.clone(), item.es_corregido));
             applied += 1;
         }
-        eprintln!("  batch {index}: {applied} correction(s) of {}", chunk.len());
+        eprintln!(
+            "  batch {index}: {applied} correction(s) of {}",
+            chunk.len()
+        );
     }
 
     eprintln!(
@@ -1595,7 +1696,11 @@ async fn post(
         };
         std::fs::write(&path, serde_json::to_string_pretty(&record)?)
             .with_context(|| format!("failed to write {}", path.display()))?;
-        eprintln!("recorded {} replacement(s) in {}", record.changes.len(), path.display());
+        eprintln!(
+            "recorded {} replacement(s) in {}",
+            record.changes.len(),
+            path.display()
+        );
     } else {
         eprintln!("no --log given: these replacements cannot be reverted automatically");
     }
@@ -1693,7 +1798,10 @@ async fn revert(project: &PathBuf, log: &PathBuf, dry_run: bool) -> Result<()> {
 /// known location is tried before falling back to PATH for a custom install.
 fn lms_command() -> std::process::Command {
     if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-        let bundled = PathBuf::from(home).join(".lmstudio").join("bin").join("lms");
+        let bundled = PathBuf::from(home)
+            .join(".lmstudio")
+            .join("bin")
+            .join("lms");
         let bundled = bundled.with_extension(std::env::consts::EXE_EXTENSION);
         if bundled.exists() {
             return std::process::Command::new(bundled);
@@ -1826,7 +1934,10 @@ fn installed_path(entry: &CatalogEntry) -> Result<PathBuf> {
         .repo
         .split_once('/')
         .context("catalog entries use publisher/repository")?;
-    Ok(models_root()?.join(publisher).join(repository).join(&entry.archivo))
+    Ok(models_root()?
+        .join(publisher)
+        .join(repository)
+        .join(&entry.archivo))
 }
 
 fn show_catalog(task: Option<&str>) -> Result<()> {
@@ -1837,7 +1948,9 @@ fn show_catalog(task: Option<&str>) -> Result<()> {
         {
             continue;
         }
-        let installed = installed_path(entry).map(|path| path.exists()).unwrap_or(false);
+        let installed = installed_path(entry)
+            .map(|path| path.exists())
+            .unwrap_or(false);
         println!(
             "{}  [{}]  {:.1} GB  {}",
             entry.id,
@@ -1905,7 +2018,11 @@ async fn download_model(id: &str) -> Result<()> {
         if let Some(total) = expected
             && (written >> 26) != ((written - chunk.len() as u64) >> 26)
         {
-            progress((written >> 20) as usize, (total >> 20) as usize, "descarga (MB)");
+            progress(
+                (written >> 20) as usize,
+                (total >> 20) as usize,
+                "descarga (MB)",
+            );
         }
         if written - reported >= 512 * 1024 * 1024 {
             reported = written;
@@ -1980,7 +2097,10 @@ fn remove_model(id: &str) -> Result<()> {
             }
             for file in std::fs::read_dir(&repository)? {
                 let file = file?.path();
-                let name = file.file_name().and_then(|name| name.to_str()).unwrap_or("");
+                let name = file
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
                 if name.to_ascii_lowercase().contains(&id.to_ascii_lowercase()) {
                     found.push(file);
                 }
@@ -2008,7 +2128,8 @@ fn remove_model(id: &str) -> Result<()> {
 fn import_model(file: &PathBuf, publisher: &str, name: Option<String>) -> Result<()> {
     anyhow::ensure!(file.exists(), "{} does not exist", file.display());
     anyhow::ensure!(
-        file.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("gguf")),
+        file.extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("gguf")),
         "only .gguf weights can be imported"
     );
     let stem = file
@@ -2035,7 +2156,6 @@ fn import_model(file: &PathBuf, publisher: &str, name: Option<String>) -> Result
     eprintln!("restart LM Studio if it does not list it yet");
     Ok(())
 }
-
 
 /// Test cases, shipped with the binary so a run needs no external files and the
 /// cases stay versioned alongside the checks that read them.
@@ -2087,7 +2207,10 @@ fn bench_cases(languages: Option<&str>) -> Result<BTreeMap<String, Vec<BenchCase
             serde_json::from_value(value).context("a language holds malformed cases")?,
         );
     }
-    anyhow::ensure!(!cases.is_empty(), "no cases matched the requested languages");
+    anyhow::ensure!(
+        !cases.is_empty(),
+        "no cases matched the requested languages"
+    );
     Ok(cases)
 }
 

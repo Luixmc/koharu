@@ -327,7 +327,10 @@ fn render_notes(name: &str, notes: &Notes, user: Option<&UserNotes>) -> String {
         notes.obra.resumen.trim()
     );
     if !notes.obra.registro_sexual.trim().is_empty() {
-        text.push_str(&format!("Registro sexual: {}\n", notes.obra.registro_sexual.trim()));
+        text.push_str(&format!(
+            "Registro sexual: {}\n",
+            notes.obra.registro_sexual.trim()
+        ));
     }
     text.push_str("\n## Personajes\n");
     for character in &notes.personajes {
@@ -436,8 +439,8 @@ pub async fn study(
             page.push_str(&format!("- {}\n", block.source.replace('\n', " ")));
         }
         let (text, shown) = chunks.last_mut().expect("seeded with one chunk");
-        let full = text.len() + page.len() > STUDY_CHUNK
-            || (vision && shown.len() >= IMAGES_PER_PART);
+        let full =
+            text.len() + page.len() > STUDY_CHUNK || (vision && shown.len() >= IMAGES_PER_PART);
         if !text.is_empty() && full {
             chunks.push((page, vec![*id]));
         } else {
@@ -446,7 +449,10 @@ pub async fn study(
         }
     }
     chunks.retain(|(text, _)| !text.is_empty());
-    anyhow::ensure!(!chunks.is_empty(), "the project has no recognized text; run OCR first");
+    anyhow::ensure!(
+        !chunks.is_empty(),
+        "the project has no recognized text; run OCR first"
+    );
     eprintln!(
         "studying {} page(s) in {} part(s){}{}",
         pages.len(),
@@ -457,7 +463,9 @@ pub async fn study(
 
     let work = Work::of(project);
     let user_notes = work.user_notes();
-    let tags = user_notes.as_ref().map(|user| crate::etiquetas::read(&user.etiquetas));
+    let tags = user_notes
+        .as_ref()
+        .map(|user| crate::etiquetas::read(&user.etiquetas));
     if let Some(minors) = tags.as_ref().filter(|tags| !tags.menores.is_empty()) {
         anyhow::bail!(
             "la obra tiene etiquetas de menores ({}): no se estudia",
@@ -499,7 +507,8 @@ pub async fn study(
         if vision {
             for id in shown {
                 if let Some(url) = page_image_sized(&snapshot, *id, STUDY_IMAGE_SIDE).await? {
-                    content.push(serde_json::json!({"type": "image_url", "image_url": {"url": url}}));
+                    content
+                        .push(serde_json::json!({"type": "image_url", "image_url": {"url": url}}));
                 }
             }
         }
@@ -533,9 +542,7 @@ pub async fn study(
             .first()
             .map(|choice| choice.message.content.as_str())
             .unwrap_or_default();
-        match extract_json(reply)
-            .and_then(|json| serde_json::from_str::<Notes>(json).ok())
-        {
+        match extract_json(reply).and_then(|json| serde_json::from_str::<Notes>(json).ok()) {
             Some(updated) => {
                 notes = updated;
                 eprintln!(
@@ -546,7 +553,11 @@ pub async fn study(
                     notes.terminos.len()
                 );
             }
-            None => eprintln!("  parte {}/{}: respuesta ilegible, se omite", index + 1, chunks.len()),
+            None => eprintln!(
+                "  parte {}/{}: respuesta ilegible, se omite",
+                index + 1,
+                chunks.len()
+            ),
         }
     }
 
@@ -697,7 +708,11 @@ pub async fn study_pages(
     let count = limit.unwrap_or(pages.len()).min(pages.len());
     eprintln!(
         "studying {count} page(s) {}",
-        if vision { "with their images" } else { "from their text only" }
+        if vision {
+            "with their images"
+        } else {
+            "from their text only"
+        }
     );
 
     let client = reqwest::Client::new();
@@ -760,8 +775,8 @@ pub async fn study_pages(
             .first()
             .map(|choice| choice.message.content.as_str())
             .unwrap_or_default();
-        let Some(parsed) = extract_json(reply)
-            .and_then(|json| serde_json::from_str::<PageReply>(json).ok())
+        let Some(parsed) =
+            extract_json(reply).and_then(|json| serde_json::from_str::<PageReply>(json).ok())
         else {
             eprintln!("  página {}: respuesta ilegible, se omite", index + 1);
             continue;
@@ -773,8 +788,12 @@ pub async fn study_pages(
                 let found = parsed.globos.iter().find(|balloon| balloon.n == n + 1);
                 BalloonNote {
                     original: block.source.clone(),
-                    habla: found.map(|b| b.habla.clone()).unwrap_or_else(|| "?".to_owned()),
-                    a_quien: found.map(|b| b.a_quien.clone()).unwrap_or_else(|| "?".to_owned()),
+                    habla: found
+                        .map(|b| b.habla.clone())
+                        .unwrap_or_else(|| "?".to_owned()),
+                    a_quien: found
+                        .map(|b| b.a_quien.clone())
+                        .unwrap_or_else(|| "?".to_owned()),
                     nota: found.map(|b| b.nota.clone()).unwrap_or_default(),
                 }
             })
@@ -885,8 +904,16 @@ pub async fn learn(project: &Path, base_url: &str, model: &str) -> Result<()> {
             "required": ["terminos"],
             "additionalProperties": false
         });
-        let Some(reply) =
-            chat_json(&client, base_url, model, LEARN_PROMPT, &user, "terminos", schema).await?
+        let Some(reply) = chat_json(
+            &client,
+            base_url,
+            model,
+            LEARN_PROMPT,
+            &user,
+            "terminos",
+            schema,
+        )
+        .await?
         else {
             eprintln!("  a batch returned no usable reply, skipped");
             continue;
@@ -947,12 +974,19 @@ mod tests {
             ..Notes::default()
         };
         let user = UserNotes {
-            etiquetas: vec!["romance".to_owned(), " ".to_owned(), "oficina".to_owned(), "language:english".to_owned()],
+            etiquetas: vec![
+                "romance".to_owned(),
+                " ".to_owned(),
+                "oficina".to_owned(),
+                "language:english".to_owned(),
+            ],
             descripcion: "Pareja casada que quiere un hijo.".to_owned(),
         };
         let text = render_notes("obra", &notes, Some(&user));
-        assert!(text.contains("Etiquetas: romance, oficina
-"));
+        assert!(text.contains(
+            "Etiquetas: romance, oficina
+"
+        ));
         assert!(text.contains("Descripción: Pareja casada"));
         assert!(text.contains("Comparación con el texto: Coincide"));
         assert!(!render_notes("obra", &notes, None).contains("usuario"));

@@ -25,11 +25,20 @@ const DEFAULT_CORRECTOR: &str = "gemma-4-12b-it-qat";
 /// Cydonia corrects Spanish better than Gemma (adverbs, word order), and
 /// only step 6 needs it, so it takes the memory once Gemma is gone.
 const DEFAULT_REVIEWER: &str = "thedrummer_cydonia-24b-v4.3";
+/// The steps still to run, so a queue cut short (power cut, closed panel)
+/// can be resumed; removed once the queue empties or the user stops it.
+const QUEUE_FILE: &str = r"I:\Koharu\panel-cola.json";
+/// Seconds Windows waits before shutting down, so `shutdown /a` can cancel it.
+const SHUTDOWN_DELAY: &str = "120";
 /// The model each LM Studio step last used, so the choice survives a restart.
 const MODEL_CHOICES: &str = r"I:\Koharu\panel-modelos.json";
 /// Source languages; khr picks the OCR that reads each one best.
-const LANGUAGES: [(&str, &str); 4] =
-    [("ja", "Japonés"), ("ko", "Coreano"), ("zh", "Chino"), ("en", "Inglés")];
+const LANGUAGES: [(&str, &str); 4] = [
+    ("ja", "Japonés"),
+    ("ko", "Coreano"),
+    ("zh", "Chino"),
+    ("en", "Inglés"),
+];
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_LINES: usize = 5000;
 
@@ -41,6 +50,7 @@ const STAGES: [(&str, &str); 3] = [
 ];
 
 /// What to do once a step exits successfully.
+#[derive(serde::Serialize, serde::Deserialize)]
 enum After {
     Nothing,
     /// Open the proposals of this project (if it is still the selected one).
@@ -82,6 +92,7 @@ struct Term {
     note: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Step {
     name: String,
     program: PathBuf,
@@ -93,7 +104,10 @@ struct Step {
 impl Step {
     /// The project a planned step belongs to, from its "[name] step" label.
     fn project(&self) -> Option<&str> {
-        self.name.strip_prefix('[')?.split_once("] ").map(|(name, _)| name)
+        self.name
+            .strip_prefix('[')?
+            .split_once("] ")
+            .map(|(name, _)| name)
     }
 }
 
@@ -117,7 +131,11 @@ struct StepProgress {
 
 impl StepProgress {
     fn fraction(&self) -> f32 {
-        if self.total == 0 { 0.0 } else { (self.done as f32 / self.total as f32).min(1.0) }
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.done as f32 / self.total as f32).min(1.0)
+        }
     }
 
     fn remaining(&self) -> Option<Duration> {
@@ -167,6 +185,10 @@ struct Panel {
     idioma: usize,
     queue: VecDeque<Step>,
     queued_projects: Vec<String>,
+    /// A queue left unfinished by a previous run, offered for resuming.
+    unfinished: Vec<Step>,
+    /// Shut Windows down once the queue empties.
+    shutdown_when_done: bool,
     current: Option<Step>,
     /// When the running step started, and its progress if khr reports any.
     step_started: Instant,
@@ -225,6 +247,8 @@ impl Panel {
             idioma: 0,
             queue: VecDeque::new(),
             queued_projects: Vec::new(),
+            unfinished: load_queue(),
+            shutdown_when_done: false,
             current: None,
             step_started: Instant::now(),
             progress: None,
@@ -258,7 +282,12 @@ impl Panel {
         else {
             return;
         };
-        let text = |key: &str| saved.get(key).and_then(|value| value.as_str()).map(str::to_owned);
+        let text = |key: &str| {
+            saved
+                .get(key)
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+        };
         if let Some(model) = text("estudiar") {
             self.study_model = model;
         }
@@ -268,7 +297,10 @@ impl Panel {
         if let Some(model) = text("revisar") {
             self.reviewer = model;
         }
-        if let Some(local) = saved.get("traducir_local").and_then(|value| value.as_bool()) {
+        if let Some(local) = saved
+            .get("traducir_local")
+            .and_then(|value| value.as_bool())
+        {
             self.llm_translation = local;
         }
     }
@@ -280,7 +312,10 @@ impl Panel {
             "traducir_local": self.llm_translation,
             "revisar": self.reviewer,
         });
-        let _ = std::fs::write(MODEL_CHOICES, serde_json::to_string_pretty(&choices).unwrap_or_default());
+        let _ = std::fs::write(
+            MODEL_CHOICES,
+            serde_json::to_string_pretty(&choices).unwrap_or_default(),
+        );
     }
 
     fn reload_projects(&mut self) {
@@ -297,7 +332,11 @@ impl Panel {
         self.projects = found.into_iter().map(|(_, path)| path).collect();
         self.selected = previous
             .and_then(|prev| self.projects.iter().position(|path| *path == prev))
-            .or(if self.projects.is_empty() { None } else { Some(0) });
+            .or(if self.projects.is_empty() {
+                None
+            } else {
+                Some(0)
+            });
         self.project_changed();
     }
 
@@ -322,7 +361,9 @@ impl Panel {
     /// Projects named "... JA", "... KO", "... ZH" or "... EN" set the source
     /// language themselves.
     fn guess_language(&mut self) {
-        let Some(stem) = self.project().and_then(Path::file_stem) else { return };
+        let Some(stem) = self.project().and_then(Path::file_stem) else {
+            return;
+        };
         let stem = stem.to_string_lossy().to_lowercase();
         if let Some(index) = LANGUAGES.iter().position(|(code, _)| {
             stem.ends_with(&format!(" {code}")) || stem.ends_with(&format!("-{code}"))
@@ -344,7 +385,14 @@ impl Panel {
         }
     }
 
-    fn push(&mut self, name: &str, program: &Path, args: &[&str], ignore_error: bool, after: After) {
+    fn push(
+        &mut self,
+        name: &str,
+        program: &Path,
+        args: &[&str],
+        ignore_error: bool,
+        after: After,
+    ) {
         self.queue.push_back(Step {
             name: name.to_owned(),
             program: program.to_path_buf(),
@@ -368,6 +416,10 @@ impl Panel {
                 self.status = "Terminado.".to_owned();
                 self.log("=== Terminado ===");
             }
+            self.save_queue();
+            if std::mem::take(&mut self.shutdown_when_done) {
+                self.shut_down();
+            }
             return;
         };
         self.log("");
@@ -386,7 +438,10 @@ impl Panel {
         let mut child = match spawned {
             Ok(child) => child,
             Err(error) => {
-                self.log(format!("!!! No se pudo lanzar {}: {error}", step.program.display()));
+                self.log(format!(
+                    "!!! No se pudo lanzar {}: {error}",
+                    step.program.display()
+                ));
                 self.status = format!("Error en: {}", step.name);
                 self.failed = true;
                 self.queue.clear();
@@ -437,6 +492,68 @@ impl Panel {
         self.current = Some(step);
         self.step_started = Instant::now();
         self.progress = None;
+        self.save_queue();
+    }
+
+    /// Writes the running step and the ones after it; nothing left removes
+    /// the file.
+    fn save_queue(&self) {
+        let steps: Vec<&Step> = self.current.iter().chain(self.queue.iter()).collect();
+        if steps.is_empty() {
+            let _ = std::fs::remove_file(QUEUE_FILE);
+            return;
+        }
+        if let Ok(text) = serde_json::to_string_pretty(&steps) {
+            let _ = std::fs::write(QUEUE_FILE, text);
+        }
+    }
+
+    /// Queues the steps a previous run left unfinished. Pipeline runs skip
+    /// the pages they had already finished; the step that was cut is
+    /// repeated from there.
+    fn resume(&mut self, ctx: &egui::Context) {
+        if !confirm_koharu_closed() {
+            return;
+        }
+        let idle = self.current.is_none() && self.queue.is_empty();
+        if idle {
+            self.lines.clear();
+            self.queued_projects.clear();
+        }
+        for mut step in std::mem::take(&mut self.unfinished) {
+            if step.args.first().is_some_and(|arg| arg == "run")
+                && !step.args.iter().any(|arg| arg == "--pendientes")
+            {
+                step.args.push("--pendientes".to_owned());
+            }
+            if let Some(name) = step.project().map(str::to_owned)
+                && !self.queued_projects.contains(&name)
+            {
+                self.queued_projects.push(name);
+            }
+            self.queue.push_back(step);
+        }
+        self.log("--- Reanudando la cola anterior ---");
+        if idle {
+            self.begin(ctx);
+        } else {
+            self.save_queue();
+        }
+    }
+
+    fn shut_down(&mut self) {
+        let started = Command::new("shutdown")
+            .args(["/s", "/t", SHUTDOWN_DELAY, "/c", "Koharu terminó la cola."])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        match started {
+            Ok(_) => {
+                self.status =
+                    format!("El PC se apaga en {SHUTDOWN_DELAY} s; para cancelarlo: shutdown /a");
+                self.log(self.status.clone());
+            }
+            Err(error) => self.log(format!("!!! No se pudo apagar el PC: {error}")),
+        }
     }
 
     /// Projects in the queue, in order, that have not started yet.
@@ -455,6 +572,7 @@ impl Panel {
     fn cancel_queued(&mut self, name: &str) {
         self.queue.retain(|step| step.project() != Some(name));
         self.queued_projects.retain(|queued| queued != name);
+        self.save_queue();
         self.log(format!("--- {name}: quitado de la cola ---"));
         self.status = format!("Quitado de la cola: {name}");
     }
@@ -462,7 +580,9 @@ impl Panel {
     /// Takes a `@progreso <done> <total> <what>` line; returns false for any
     /// other line, which belongs in the log.
     fn read_progress(&mut self, line: &str) -> bool {
-        let Some(rest) = line.trim().strip_prefix("@progreso ") else { return false };
+        let Some(rest) = line.trim().strip_prefix("@progreso ") else {
+            return false;
+        };
         let mut parts = rest.splitn(3, ' ');
         let (Some(Ok(done)), Some(Ok(total))) = (
             parts.next().map(str::parse::<usize>),
@@ -515,7 +635,9 @@ impl Panel {
                         self.log(rest);
                     }
                     self.progress = None;
-                    let Some(step) = self.current.take() else { continue };
+                    let Some(step) = self.current.take() else {
+                        continue;
+                    };
                     if code != Some(0) && !step.ignore_error {
                         let shown = code.map_or("detenido".to_owned(), |c| format!("código {c}"));
                         self.log(format!(
@@ -527,7 +649,13 @@ impl Panel {
                         self.queue.clear();
                         // Leave the card free even when correction fails.
                         let khr = self.khr.clone();
-                        self.push("Liberar VRAM", &khr, &["models", "unload"], true, After::Nothing);
+                        self.push(
+                            "Liberar VRAM",
+                            &khr,
+                            &["models", "unload"],
+                            true,
+                            After::Nothing,
+                        );
                     } else {
                         self.finish(step.after);
                     }
@@ -597,8 +725,12 @@ impl Panel {
             self.lines.clear();
             self.queued_projects.clear();
         }
-        if self.plan() && idle {
-            self.begin(ctx);
+        if self.plan() {
+            if idle {
+                self.begin(ctx);
+            } else {
+                self.save_queue();
+            }
         }
     }
 
@@ -606,7 +738,9 @@ impl Panel {
     /// run first, then one LM Studio load covers studying, translating and
     /// reviewing.
     fn plan(&mut self) -> bool {
-        let Some(project) = self.project().map(Path::to_path_buf) else { return false };
+        let Some(project) = self.project().map(Path::to_path_buf) else {
+            return false;
+        };
         let stages: Vec<(&str, &str)> = STAGES
             .iter()
             .zip(self.stages)
@@ -641,27 +775,65 @@ impl Panel {
         let khr = self.khr.clone();
         let project_arg = project.display().to_string();
         let pages = self.pages.to_string();
-        let page_args: Vec<&str> = if self.pages > 0 { vec!["--pages", &pages] } else { Vec::new() };
+        let page_args: Vec<&str> = if self.pages > 0 {
+            vec!["--pages", &pages]
+        } else {
+            Vec::new()
+        };
         let idioma = LANGUAGES[self.idioma].0;
         let label = |step: &str| format!("[{name}] {step}");
 
         if !stages.is_empty() {
-            self.push(&label("Liberar VRAM"), &khr, &["models", "unload"], true, After::Nothing);
-            let joined = stages.iter().map(|(key, _)| *key).collect::<Vec<_>>().join(",");
-            let mut args = vec!["run", "--project", &project_arg, "--stages", &joined, "--idioma", idioma];
+            self.push(
+                &label("Liberar VRAM"),
+                &khr,
+                &["models", "unload"],
+                true,
+                After::Nothing,
+            );
+            let joined = stages
+                .iter()
+                .map(|(key, _)| *key)
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut args = vec![
+                "run",
+                "--project",
+                &project_arg,
+                "--stages",
+                &joined,
+                "--idioma",
+                idioma,
+            ];
             args.extend(&page_args);
-            let shown = stages.iter().map(|(_, text)| *text).collect::<Vec<_>>().join(" · ");
+            let shown = stages
+                .iter()
+                .map(|(_, text)| *text)
+                .collect::<Vec<_>>()
+                .join(" · ");
             self.push(&label(&shown), &khr, &args, false, After::Nothing);
         }
         if self.translate && !self.llm_translation {
             let mut args = vec!["run", "--project", &project_arg, "--stages", "translation"];
             args.extend(&page_args);
-            self.push(&label("5. Traducir con DeepL"), &khr, &args, false, After::Nothing);
+            self.push(
+                &label("5. Traducir con DeepL"),
+                &khr,
+                &args,
+                false,
+                After::Nothing,
+            );
         }
         let uses_llm = self.study || llm_translation || self.review_step;
         if uses_llm {
             let lms = self.lms.clone();
-            self.push(&label("Iniciar servidor de LM Studio"), &lms, &["server", "start"], true, After::Nothing);
+            self.push(
+                &label("Iniciar servidor de LM Studio"),
+                &lms,
+                &["server", "start"],
+                true,
+                After::Nothing,
+            );
         }
         // Two models do not fit in 16 GB of RAM: each change frees the other.
         let mut loaded: Option<String> = None;
@@ -670,14 +842,34 @@ impl Panel {
             // fetched into usuario.json right before the study reads it.
             let gallery = self.gallery.trim().to_owned();
             if !gallery.is_empty() {
-                let args = ["etiquetas", "--galeria", &gallery, "--project", &project_arg];
-                self.push(&label("Traer etiquetas de la galería"), &khr, &args, true, After::Nothing);
+                let args = [
+                    "etiquetas",
+                    "--galeria",
+                    &gallery,
+                    "--project",
+                    &project_arg,
+                ];
+                self.push(
+                    &label("Traer etiquetas de la galería"),
+                    &khr,
+                    &args,
+                    true,
+                    After::Nothing,
+                );
             }
             self.switch_model(&mut loaded, &study_model, &label);
             if let Err(error) = self.save_user_notes() {
-                self.log(format!("No se guardaron tus etiquetas y descripción: {error}"));
+                self.log(format!(
+                    "No se guardaron tus etiquetas y descripción: {error}"
+                ));
             }
-            let mut args = vec!["estudiar", "--project", &project_arg, "--model", &study_model];
+            let mut args = vec![
+                "estudiar",
+                "--project",
+                &project_arg,
+                "--model",
+                &study_model,
+            ];
             if self.left_to_right {
                 args.push("--left-to-right");
             }
@@ -687,7 +879,13 @@ impl Panel {
             } else {
                 After::Nothing
             };
-            self.push(&label("4. Estudiar la obra (ficha y términos)"), &khr, &args, false, after);
+            self.push(
+                &label("4. Estudiar la obra (ficha y términos)"),
+                &khr,
+                &args,
+                false,
+                after,
+            );
         }
         if llm_translation {
             self.switch_model(&mut loaded, &model, &label);
@@ -702,7 +900,13 @@ impl Panel {
                 "--without-pages",
             ];
             args.extend(&page_args);
-            self.push(&label(&format!("5. Traducir con {model}")), &khr, &args, false, After::Nothing);
+            self.push(
+                &label(&format!("5. Traducir con {model}")),
+                &khr,
+                &args,
+                false,
+                After::Nothing,
+            );
         }
         if self.review_step {
             self.switch_model(&mut loaded, &reviewer, &label);
@@ -711,7 +915,13 @@ impl Panel {
             if self.left_to_right {
                 args.push("--left-to-right");
             }
-            self.push(&label(&format!("6. Revisar con {reviewer}")), &khr, &args, false, After::Nothing);
+            self.push(
+                &label(&format!("6. Revisar con {reviewer}")),
+                &khr,
+                &args,
+                false,
+                After::Nothing,
+            );
         }
         if let Some(loaded) = loaded {
             let after = if self.review_step {
@@ -721,27 +931,52 @@ impl Panel {
             } else {
                 After::Nothing
             };
-            self.push(&label("Liberar modelo de LM Studio"), &khr, &["models", "unload", &loaded], true, after);
+            self.push(
+                &label("Liberar modelo de LM Studio"),
+                &khr,
+                &["models", "unload", &loaded],
+                true,
+                after,
+            );
         }
         self.status = format!("En cola: {}", self.queued_projects.join(", "));
         true
     }
 
     /// Queues loading `model`, freeing the one loaded before if it differs.
-    fn switch_model(&mut self, loaded: &mut Option<String>, model: &str, label: &dyn Fn(&str) -> String) {
+    fn switch_model(
+        &mut self,
+        loaded: &mut Option<String>,
+        model: &str,
+        label: &dyn Fn(&str) -> String,
+    ) {
         if loaded.as_deref() == Some(model) {
             return;
         }
         let khr = self.khr.clone();
         if let Some(previous) = loaded.take() {
-            self.push(&label("Liberar modelo de LM Studio"), &khr, &["models", "unload", &previous], true, After::Nothing);
+            self.push(
+                &label("Liberar modelo de LM Studio"),
+                &khr,
+                &["models", "unload", &previous],
+                true,
+                After::Nothing,
+            );
         }
-        self.push(&label(&format!("Cargar {model}")), &khr, &["models", "load", model], false, After::Nothing);
+        self.push(
+            &label(&format!("Cargar {model}")),
+            &khr,
+            &["models", "load", model],
+            false,
+            After::Nothing,
+        );
         *loaded = Some(model.to_owned());
     }
 
     fn learn(&mut self, ctx: &egui::Context) {
-        let Some(project) = self.project().map(Path::to_path_buf) else { return };
+        let Some(project) = self.project().map(Path::to_path_buf) else {
+            return;
+        };
         let model = self.corrector.trim().to_owned();
         if model.is_empty() {
             self.status = "Escribe el modelo local.".to_owned();
@@ -754,8 +989,20 @@ impl Panel {
         let project_arg = project.display().to_string();
         let name = project_name(&project);
         let label = |step: &str| format!("[{name}] {step}");
-        self.push(&label("Iniciar servidor de LM Studio"), &lms, &["server", "start"], true, After::Nothing);
-        self.push(&label(&format!("Cargar {model}")), &khr, &["models", "load", &model], false, After::Nothing);
+        self.push(
+            &label("Iniciar servidor de LM Studio"),
+            &lms,
+            &["server", "start"],
+            true,
+            After::Nothing,
+        );
+        self.push(
+            &label(&format!("Cargar {model}")),
+            &khr,
+            &["models", "load", &model],
+            false,
+            After::Nothing,
+        );
         self.push(
             &label("Aprender de mis correcciones"),
             &khr,
@@ -786,7 +1033,12 @@ impl Panel {
             .unwrap_or_default();
         self.tags = notes["etiquetas"]
             .as_array()
-            .map(|tags| tags.iter().filter_map(|tag| tag.as_str()).collect::<Vec<_>>().join(", "))
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|tag| tag.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
             .unwrap_or_default();
         self.description = notes["descripcion"].as_str().unwrap_or_default().to_owned();
         self.gallery.clear();
@@ -795,7 +1047,9 @@ impl Panel {
     /// Writes the tags and description for `khr estudiar`; empty fields
     /// remove the file so the study starts from the text alone.
     fn save_user_notes(&self) -> std::io::Result<()> {
-        let Some(dir) = self.work_dir() else { return Ok(()) };
+        let Some(dir) = self.work_dir() else {
+            return Ok(());
+        };
         let path = dir.join("usuario.json");
         let tags: Vec<&str> = self
             .tags
@@ -814,7 +1068,10 @@ impl Panel {
             "etiquetas": tags,
             "descripcion": self.description.trim(),
         });
-        std::fs::write(path, serde_json::to_string_pretty(&notes).unwrap_or_default())
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&notes).unwrap_or_default(),
+        )
     }
 
     /// Asks `khr etiquetas` for the gallery's tags without blocking the window.
@@ -840,7 +1097,11 @@ impl Panel {
                         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
                     } else {
                         let error = String::from_utf8_lossy(&output.stderr);
-                        Err(error.lines().last().unwrap_or("error desconocido").to_owned())
+                        Err(error
+                            .lines()
+                            .last()
+                            .unwrap_or("error desconocido")
+                            .to_owned())
                     }
                 });
             let _ = tx.send(Event::Gallery(result));
@@ -868,7 +1129,12 @@ impl Panel {
             .filter(|tag| !tag.is_empty())
             .collect();
         let before = tags.len();
-        for tag in gallery["etiquetas"].as_array().into_iter().flatten().filter_map(|tag| tag.as_str()) {
+        for tag in gallery["etiquetas"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|tag| tag.as_str())
+        {
             if !tags.iter().any(|known| known == tag) {
                 tags.push(tag.to_owned());
             }
@@ -916,8 +1182,12 @@ impl Panel {
         }
         let count = pending.len();
         match move_terms(dir, pending, true, &[]) {
-            Ok(_) => self.log(format!("{count} término(s) propuestos aprobados solos antes de traducir.")),
-            Err(error) => self.log(format!("No se pudieron aprobar los términos propuestos: {error}")),
+            Ok(_) => self.log(format!(
+                "{count} término(s) propuestos aprobados solos antes de traducir."
+            )),
+            Err(error) => self.log(format!(
+                "No se pudieron aprobar los términos propuestos: {error}"
+            )),
         }
         if self.work_dir().as_deref() == Some(dir) {
             self.load_glossary();
@@ -928,7 +1198,9 @@ impl Panel {
     /// entry with the same original there. The work keeps its copy, which
     /// still wins inside this work.
     fn promote(&mut self, index: usize) {
-        let Some(term) = self.work_terms.get(index).cloned() else { return };
+        let Some(term) = self.work_terms.get(index).cloned() else {
+            return;
+        };
         let global = Path::new(GLOBAL_GLOSSARY);
         let mut terms = read_terms(global);
         terms.retain(|existing| existing.source.to_lowercase() != term.source.to_lowercase());
@@ -941,12 +1213,16 @@ impl Panel {
             .map(|line| format!("{line}\n"))
             .collect();
         let header = if header.is_empty() {
-            "# Glosario global: original<TAB>traducción<TAB>nota. Vale para todas las obras.\n".to_owned()
+            "# Glosario global: original<TAB>traducción<TAB>nota. Vale para todas las obras.\n"
+                .to_owned()
         } else {
             header
         };
         self.status = match write_terms(global, &header, &terms) {
-            Ok(()) => format!("\"{}\" → \"{}\" añadido al glosario global.", term.source, term.target),
+            Ok(()) => format!(
+                "\"{}\" → \"{}\" añadido al glosario global.",
+                term.source, term.target
+            ),
             Err(error) => format!("No se pudo guardar el glosario global: {error}"),
         };
     }
@@ -1083,13 +1359,20 @@ impl Panel {
             (
                 "correcciones-aprobadas.tsv",
                 "# Correcciones aprobadas pendientes de aplicar: id\tpropuesta\n",
-                format!("{}\t{}", correction.id, correction.proposal.replace('\t', " ")),
+                format!(
+                    "{}\t{}",
+                    correction.id,
+                    correction.proposal.replace('\t', " ")
+                ),
             )
         } else {
             (
                 "correcciones-rechazadas.tsv",
                 "# Correcciones rechazadas: id\ttraducción que se dejó\tpropuesta\n",
-                format!("{}\t{}\t{}", correction.id, correction.current, correction.proposal),
+                format!(
+                    "{}\t{}\t{}",
+                    correction.id, correction.current, correction.proposal
+                ),
             )
         };
         let mut kept = read_lines(&dir.join(file));
@@ -1131,15 +1414,20 @@ impl Panel {
             target,
             note: "Aprobado desde una corrección.".to_owned(),
         });
-        let header = "# Glosario de esta obra: original<TAB>traducción<TAB>nota. Manda sobre el global.\n";
+        let header =
+            "# Glosario de esta obra: original<TAB>traducción<TAB>nota. Manda sobre el global.\n";
         match write_terms(&dir.join("glosario.tsv"), header, &terms) {
-            Ok(()) => self.status = format!("{} término(s) en el glosario de la obra.", terms.len()),
+            Ok(()) => {
+                self.status = format!("{} término(s) en el glosario de la obra.", terms.len())
+            }
             Err(error) => self.status = format!("No se pudo guardar el glosario: {error}"),
         }
     }
 
     fn apply_corrections(&mut self, ctx: &egui::Context) {
-        let Some(project) = self.project().map(Path::to_path_buf) else { return };
+        let Some(project) = self.project().map(Path::to_path_buf) else {
+            return;
+        };
         if self.current.is_some() || !confirm_koharu_closed() {
             return;
         }
@@ -1147,7 +1435,10 @@ impl Panel {
         let khr = self.khr.clone();
         let project_arg = project.display().to_string();
         self.push(
-            &format!("[{}] Aplicar correcciones aprobadas", project_name(&project)),
+            &format!(
+                "[{}] Aplicar correcciones aprobadas",
+                project_name(&project)
+            ),
             &khr,
             &["aplicar", "--project", &project_arg],
             false,
@@ -1160,7 +1451,9 @@ impl Panel {
     /// Renders the finished pages with khr, one at a time: exporting from the
     /// Koharu app kept every page in memory and took the PC down.
     fn export_pages(&mut self, ctx: &egui::Context) {
-        let Some(project) = self.project().map(Path::to_path_buf) else { return };
+        let Some(project) = self.project().map(Path::to_path_buf) else {
+            return;
+        };
         if self.current.is_some() {
             return;
         }
@@ -1182,7 +1475,9 @@ impl Panel {
     /// Proposals made before `revisar` saved the pages around them: read the
     /// pages now (quick, no model) and reopen the window with them.
     fn load_page_context(&mut self, ctx: &egui::Context) {
-        let Some(project) = self.project().map(Path::to_path_buf) else { return };
+        let Some(project) = self.project().map(Path::to_path_buf) else {
+            return;
+        };
         self.lines.clear();
         let khr = self.khr.clone();
         let project_arg = project.display().to_string();
@@ -1190,8 +1485,17 @@ impl Panel {
         if self.left_to_right {
             args.push("--left-to-right");
         }
-        let name = format!("[{}] Leer las páginas de las correcciones", project_name(&project));
-        self.push(&name, &khr, &args, true, After::ShowCorrections(project.clone()));
+        let name = format!(
+            "[{}] Leer las páginas de las correcciones",
+            project_name(&project)
+        );
+        self.push(
+            &name,
+            &khr,
+            &args,
+            true,
+            After::ShowCorrections(project.clone()),
+        );
         self.begin(ctx);
     }
 
@@ -1346,7 +1650,8 @@ impl Panel {
             return "Elige un proyecto (se crea en Koharu importando las imágenes).".to_owned();
         };
         if !dir.join("ficha.md").exists() {
-            return "Siguiente: pasos 1-6 con el idioma original elegido (o añádelo a la cola).".to_owned();
+            return "Siguiente: pasos 1-6 con el idioma original elegido (o añádelo a la cola)."
+                .to_owned();
         }
         let proposals = read_terms(&dir.join("propuestas.tsv")).len();
         if proposals > 0 {
@@ -1369,6 +1674,9 @@ impl Panel {
 
     fn stop(&mut self) {
         self.queue.clear();
+        // Stopped on purpose: nothing to resume, and no shutdown either.
+        self.shutdown_when_done = false;
+        let _ = std::fs::remove_file(QUEUE_FILE);
         let pid = self.child.lock().unwrap().as_ref().map(Child::id);
         if let Some(pid) = pid {
             // taskkill /T also ends whatever the step spawned itself.
@@ -1527,6 +1835,37 @@ impl eframe::App for Panel {
             });
             ui.add_space(6.0);
 
+            if !self.unfinished.is_empty() {
+                let mut projects: Vec<&str> = Vec::new();
+                for name in self.unfinished.iter().filter_map(Step::project) {
+                    if !projects.contains(&name) {
+                        projects.push(name);
+                    }
+                }
+                let summary = format!(
+                    "Quedó una cola sin terminar: {} paso(s){}",
+                    self.unfinished.len(),
+                    if projects.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" de {}", projects.join(", "))
+                    }
+                );
+                ui.horizontal(|ui| {
+                    ui.colored_label(egui::Color32::from_rgb(230, 160, 40), summary);
+                    if ui.button("Reanudar").clicked() {
+                        self.resume(&ctx);
+                    }
+                    if ui.button("Descartar").clicked() {
+                        self.unfinished.clear();
+                        if self.current.is_none() && self.queue.is_empty() {
+                            let _ = std::fs::remove_file(QUEUE_FILE);
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+            }
+
             ui.horizontal(|ui| {
                 let can_run = !busy && self.project().is_some();
                 let run = egui::Button::new(egui::RichText::new("▶ Ejecutar").strong());
@@ -1540,6 +1879,7 @@ impl eframe::App for Panel {
                 if ui.add_enabled(busy, egui::Button::new("■ Detener")).clicked() {
                     self.stop();
                 }
+                ui.checkbox(&mut self.shutdown_when_done, "Apagar el PC al terminar");
                 if ui.button("Abrir Koharu").clicked() {
                     self.status = match Command::new(&self.koharu).spawn() {
                         Ok(_) => "Koharu abierto: carga el proyecto desde su menú.".to_owned(),
@@ -1602,7 +1942,11 @@ impl eframe::App for Panel {
                     ui.label("En cola:");
                     for name in &waiting {
                         ui.label(name);
-                        if ui.small_button("×").on_hover_text("Quitar de la cola").clicked() {
+                        if ui
+                            .small_button("×")
+                            .on_hover_text("Quitar de la cola")
+                            .clicked()
+                        {
                             cancel = Some(name.clone());
                         }
                     }
@@ -1629,7 +1973,9 @@ impl eframe::App for Panel {
                         )));
                     }
                     None => {
-                        ui.label(format!("Paso en curso: {elapsed} transcurridos (sin avance medible)"));
+                        ui.label(format!(
+                            "Paso en curso: {elapsed} transcurridos (sin avance medible)"
+                        ));
                     }
                 }
                 // Keep the clock moving between output lines.
@@ -1670,7 +2016,11 @@ fn confirm_koharu_closed() -> bool {
         .args(["/FI", "IMAGENAME eq koharu.exe", "/NH"])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
-        .map(|out| String::from_utf8_lossy(&out.stdout).to_lowercase().contains("koharu.exe"))
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .to_lowercase()
+                .contains("koharu.exe")
+        })
         .unwrap_or(false);
     !running
         || rfd::MessageDialog::new()
@@ -1701,7 +2051,11 @@ fn read_terms(path: &Path) -> Vec<Term> {
             let source = fields.next()?.to_owned();
             let target = fields.next()?.to_owned();
             let note = fields.next().unwrap_or_default().to_owned();
-            (!source.is_empty() && !target.is_empty()).then_some(Term { source, target, note })
+            (!source.is_empty() && !target.is_empty()).then_some(Term {
+                source,
+                target,
+                note,
+            })
         })
         .collect()
 }
@@ -1709,8 +2063,17 @@ fn read_terms(path: &Path) -> Vec<Term> {
 /// Moves `terms` into the work's glossary (or its rejected list), replacing
 /// entries with the same original, and leaves `pending` as the proposals.
 /// Returns how many terms the target file now holds.
-fn move_terms(dir: &Path, terms: Vec<Term>, approve: bool, pending: &[Term]) -> std::io::Result<usize> {
-    let target = if approve { "glosario.tsv" } else { "rechazados.tsv" };
+fn move_terms(
+    dir: &Path,
+    terms: Vec<Term>,
+    approve: bool,
+    pending: &[Term],
+) -> std::io::Result<usize> {
+    let target = if approve {
+        "glosario.tsv"
+    } else {
+        "rechazados.tsv"
+    };
     std::fs::create_dir_all(dir)?;
     let mut kept = read_terms(&dir.join(target));
     for term in terms {
@@ -1740,6 +2103,14 @@ fn write_terms(path: &Path, header: &str, terms: &[Term]) -> std::io::Result<()>
         }
     }
     std::fs::write(path, text)
+}
+
+/// The queue a previous run left behind, if any.
+fn load_queue() -> Vec<Step> {
+    std::fs::read_to_string(QUEUE_FILE)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
 }
 
 fn read_lines(path: &Path) -> Vec<String> {
@@ -1822,7 +2193,8 @@ fn speaker_label(ui: &mut egui::Ui, speaker: &str) {
                 .on_hover_text(format!("El revisor no está seguro: {doubt}"));
         }
         None => {
-            ui.label(text.weak()).on_hover_text("Quién habla y a quién, según el revisor");
+            ui.label(text.weak())
+                .on_hover_text("Quién habla y a quién, según el revisor");
         }
     }
 }
@@ -1932,14 +2304,29 @@ fn diff_job(ui: &egui::Ui, pieces: &[(Piece, String)], side: Piece) -> egui::tex
     let font = egui::TextStyle::Body.resolve(ui.style());
     let plain = ui.visuals().text_color();
     let (color, background) = match (side, ui.visuals().dark_mode) {
-        (Piece::Removed, true) => (egui::Color32::from_rgb(255, 150, 140), egui::Color32::from_rgb(95, 35, 35)),
-        (Piece::Removed, false) => (egui::Color32::from_rgb(160, 30, 30), egui::Color32::from_rgb(255, 215, 215)),
-        (_, true) => (egui::Color32::from_rgb(150, 235, 150), egui::Color32::from_rgb(30, 80, 40)),
-        (_, false) => (egui::Color32::from_rgb(20, 110, 40), egui::Color32::from_rgb(210, 245, 210)),
+        (Piece::Removed, true) => (
+            egui::Color32::from_rgb(255, 150, 140),
+            egui::Color32::from_rgb(95, 35, 35),
+        ),
+        (Piece::Removed, false) => (
+            egui::Color32::from_rgb(160, 30, 30),
+            egui::Color32::from_rgb(255, 215, 215),
+        ),
+        (_, true) => (
+            egui::Color32::from_rgb(150, 235, 150),
+            egui::Color32::from_rgb(30, 80, 40),
+        ),
+        (_, false) => (
+            egui::Color32::from_rgb(20, 110, 40),
+            egui::Color32::from_rgb(210, 245, 210),
+        ),
     };
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = ui.available_width().max(200.0);
-    for (piece, text) in pieces.iter().filter(|(piece, _)| *piece == Piece::Same || *piece == side) {
+    for (piece, text) in pieces
+        .iter()
+        .filter(|(piece, _)| *piece == Piece::Same || *piece == side)
+    {
         if !job.text.is_empty() {
             job.append(" ", 0.0, egui::TextFormat::simple(font.clone(), plain));
         }
@@ -1957,7 +2344,10 @@ fn diff_job(ui: &egui::Ui, pieces: &[(Piece, String)], side: Piece) -> egui::tex
 }
 
 fn project_name(project: &Path) -> String {
-    project.file_stem().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()
+    project
+        .file_stem()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn log_base(project: &Path) -> String {
@@ -1966,7 +2356,13 @@ fn log_base(project: &Path) -> String {
         .unwrap_or_default()
         .to_string_lossy()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -1979,12 +2375,18 @@ fn install_cjk_fonts(ctx: &egui::Context) {
         ("malgun", r"C:\Windows\Fonts\malgun.ttf"),
         ("yahei", r"C:\Windows\Fonts\msyh.ttc"),
     ] {
-        let Ok(bytes) = std::fs::read(file) else { continue };
+        let Ok(bytes) = std::fs::read(file) else {
+            continue;
+        };
         fonts
             .font_data
             .insert(name.to_owned(), Arc::new(egui::FontData::from_owned(bytes)));
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            fonts.families.entry(family).or_default().push(name.to_owned());
+            fonts
+                .families
+                .entry(family)
+                .or_default()
+                .push(name.to_owned());
         }
     }
     ctx.set_fonts(fonts);
@@ -2038,13 +2440,21 @@ mod tests {
 
     #[test]
     fn planned_steps_name_their_project() {
-        assert_eq!(step("[Sakurami EN] 5. Traducir").project(), Some("Sakurami EN"));
+        assert_eq!(
+            step("[Sakurami EN] 5. Traducir").project(),
+            Some("Sakurami EN")
+        );
         assert_eq!(step("Liberar VRAM").project(), None);
     }
 
     #[test]
     fn the_estimate_waits_for_measured_work() {
-        let mut progress = StepProgress { what: "ocr".to_owned(), done: 0, total: 10, first: None };
+        let mut progress = StepProgress {
+            what: "ocr".to_owned(),
+            done: 0,
+            total: 10,
+            first: None,
+        };
         assert!(progress.remaining().is_none());
         progress.first = Some((Instant::now() - Duration::from_secs(20), 2));
         progress.done = 2;
@@ -2059,14 +2469,23 @@ mod tests {
 
 /// The LLMs LM Studio has downloaded, by the key `lms load` takes.
 fn installed_models(lms: &Path) -> Vec<String> {
-    let Ok(output) = Command::new(lms).args(["ls", "--json"]).creation_flags(CREATE_NO_WINDOW).output() else {
+    let Ok(output) = Command::new(lms)
+        .args(["ls", "--json"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    else {
         return Vec::new();
     };
     let listed: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap_or_default();
     let mut models: Vec<String> = listed
         .iter()
         .filter(|model| model.get("type").and_then(|kind| kind.as_str()) == Some("llm"))
-        .filter_map(|model| model.get("modelKey").and_then(|key| key.as_str()).map(str::to_owned))
+        .filter_map(|model| {
+            model
+                .get("modelKey")
+                .and_then(|key| key.as_str())
+                .map(str::to_owned)
+        })
         .collect();
     models.sort();
     models
@@ -2083,31 +2502,38 @@ fn model_menu(
 ) -> bool {
     const DEEPL: &str = "DeepL (en línea)";
     let on_deepl = local.as_deref().is_some_and(|local| !*local);
-    let shown = if on_deepl { DEEPL.to_owned() } else { model.clone() };
+    let shown = if on_deepl {
+        DEEPL.to_owned()
+    } else {
+        model.clone()
+    };
     let mut changed = false;
-    egui::ComboBox::from_id_salt(id).selected_text(shown).width(260.0).show_ui(ui, |ui| {
-        if let Some(local) = local.as_deref_mut() {
-            if ui.selectable_label(!*local, DEEPL).clicked() && *local {
-                *local = false;
-                changed = true;
-            }
-        }
-        // A saved model that is no longer installed stays visible, so the
-        // menu never shows a choice that differs from what would run.
-        let mut listed: Vec<String> = models.to_vec();
-        if !model.is_empty() && !models.contains(model) {
-            listed.push(model.clone());
-        }
-        for name in listed {
-            let chosen = !on_deepl && name == *model;
-            if ui.selectable_label(chosen, name.as_str()).clicked() && !chosen {
-                *model = name;
-                if let Some(local) = local.as_deref_mut() {
-                    *local = true;
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(shown)
+        .width(260.0)
+        .show_ui(ui, |ui| {
+            if let Some(local) = local.as_deref_mut() {
+                if ui.selectable_label(!*local, DEEPL).clicked() && *local {
+                    *local = false;
+                    changed = true;
                 }
-                changed = true;
             }
-        }
-    });
+            // A saved model that is no longer installed stays visible, so the
+            // menu never shows a choice that differs from what would run.
+            let mut listed: Vec<String> = models.to_vec();
+            if !model.is_empty() && !models.contains(model) {
+                listed.push(model.clone());
+            }
+            for name in listed {
+                let chosen = !on_deepl && name == *model;
+                if ui.selectable_label(chosen, name.as_str()).clicked() && !chosen {
+                    *model = name;
+                    if let Some(local) = local.as_deref_mut() {
+                        *local = true;
+                    }
+                    changed = true;
+                }
+            }
+        });
     changed
 }
