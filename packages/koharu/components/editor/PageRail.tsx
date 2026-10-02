@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual'
 import {
+  EyeOff,
   FilePlus2,
   FolderOpen,
   LoaderCircle,
@@ -467,6 +468,7 @@ function PageItem({
   onDrop: () => void
 }) {
   const { t } = useTranslation()
+  const discreet = useKoharuStore((state) => state.discreet)
 
   return (
     <article
@@ -498,7 +500,9 @@ function PageItem({
       }}
     >
       <div className='grid h-16 w-12 place-items-center overflow-hidden rounded-lg bg-[var(--surface-well)]'>
-        {page.source_asset ? (
+        {discreet ? (
+          <EyeOff className='size-3.5 text-muted-foreground' aria-label={t('privacy.hidden')} />
+        ) : page.source_asset ? (
           <PageThumbnail page={page.id} asset={page.source_asset} label={page.label} />
         ) : (
           <span className='text-[9px] text-muted-foreground'>{t('navigator.noImage')}</span>

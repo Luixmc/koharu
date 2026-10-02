@@ -261,7 +261,9 @@
     "selectAllLayers": "Select All Layers",
     "settings": "Settings",
     "undo": "Undo",
-    "view": "View"
+    "view": "View",
+    "canvasView": "Canvas",
+    "textView": "Side-by-side text"
   },
   "model": {
     "baseUrl": "Base URL",
@@ -532,5 +534,25 @@
     "maximize": "Maximize",
     "minimize": "Minimize",
     "restore": "Restore"
+  },
+  "privacy": {
+    "hide": "Hide images",
+    "show": "Show images",
+    "hidden": "Images hidden",
+    "working": "Processing… {{done}} / {{total}}"
+  },
+  "textView": {
+    "noPage": "Select a page to see its text.",
+    "previous": "Previous page",
+    "next": "Next page",
+    "page": "Page {{page}} of {{total}}",
+    "onlyFlagged": "Only flagged ({{count}})",
+    "nothingFlagged": "The reviewer flagged nothing on this page.",
+    "noText": "This page has no text yet.",
+    "sourceOf": "Original of balloon {{number}}",
+    "translationOf": "Translation of balloon {{number}}",
+    "doubt": "Reviewer unsure: {{doubt}}",
+    "proposal": "Proposed: “{{proposal}}”",
+    "useProposal": "Use"
   }
 }

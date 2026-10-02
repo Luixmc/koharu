@@ -23,6 +23,25 @@ export function KoharuApp() {
   const editorOpen = project !== undefined && project !== null && !settingsOpen
 
   useEffect(() => {
+    // Ctrl+H retracts the images from anywhere, even while typing; Ctrl+T
+    // switches between the canvas and the side-by-side text.
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+      const key = event.key.toLowerCase()
+      const store = useKoharuStore.getState()
+      if (key === 'h') {
+        event.preventDefault()
+        store.setDiscreet(!store.discreet)
+      } else if (key === 't') {
+        event.preventDefault()
+        store.setCenterView(store.centerView === 'text' ? 'canvas' : 'text')
+      }
+    }
+    window.addEventListener('keydown', onKey, { capture: true })
+    return () => window.removeEventListener('keydown', onKey, { capture: true })
+  }, [])
+
+  useEffect(() => {
     if (!projectLoaded || selectedPages.length > 0) return
     selectPages(activePage ? [activePage] : [])
     selectLayers([])

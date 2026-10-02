@@ -261,7 +261,9 @@
     "selectAllLayers": "Seleccionar todas las capas",
     "settings": "Ajustes",
     "undo": "Deshacer",
-    "view": "Ver"
+    "view": "Ver",
+    "canvasView": "Lienzo",
+    "textView": "Texto lado a lado"
   },
   "model": {
     "baseUrl": "URL base",
@@ -532,5 +534,25 @@
     "maximize": "Maximizar",
     "minimize": "Minimizar",
     "restore": "Restaurar"
+  },
+  "privacy": {
+    "hide": "Ocultar imágenes",
+    "show": "Mostrar imágenes",
+    "hidden": "Imágenes ocultas",
+    "working": "Procesando… {{done}} / {{total}}"
+  },
+  "textView": {
+    "noPage": "Elige una página para ver su texto.",
+    "previous": "Página anterior",
+    "next": "Página siguiente",
+    "page": "Página {{page}} de {{total}}",
+    "onlyFlagged": "Solo marcados ({{count}})",
+    "nothingFlagged": "El revisor no marcó nada en esta página.",
+    "noText": "Esta página todavía no tiene texto.",
+    "sourceOf": "Original del globo {{number}}",
+    "translationOf": "Traducción del globo {{number}}",
+    "doubt": "El revisor duda: {{doubt}}",
+    "proposal": "Propuesta: «{{proposal}}»",
+    "useProposal": "Usar"
   }
 }

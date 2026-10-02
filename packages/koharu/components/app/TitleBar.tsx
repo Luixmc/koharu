@@ -1,7 +1,7 @@
 'use client'
 
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { FilePlus2, FolderOpen, LoaderCircle, Settings } from 'lucide-react'
+import { Eye, EyeOff, FilePlus2, FolderOpen, LoaderCircle, Settings } from 'lucide-react'
 import Image from 'next/image'
 import { useState, type ComponentProps } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -51,6 +51,10 @@ export function TitleBar() {
   const selectLayers = useKoharuStore((state) => state.selectLayers)
   const setSettingsOpen = useKoharuStore((state) => state.setSettingsOpen)
   const requestCanvasFit = useKoharuStore((state) => state.requestCanvasFit)
+  const discreet = useKoharuStore((state) => state.discreet)
+  const setDiscreet = useKoharuStore((state) => state.setDiscreet)
+  const centerView = useKoharuStore((state) => state.centerView)
+  const setCenterView = useKoharuStore((state) => state.setCenterView)
   const { importPages, importing } = useImportPages()
   const { run: exportProject, busy: exporting } = useCommand(
     ['export-project'],
@@ -238,6 +242,22 @@ export function TitleBar() {
               <MenubarItem disabled={!page} onClick={requestCanvasFit}>
                 {t('menu.fit')}
               </MenubarItem>
+              <MenubarSeparator />
+              <MenubarItem disabled={!project} onClick={() => setCenterView('canvas')}>
+                {centerView === 'canvas' ? '✓ ' : ''}
+                {t('menu.canvasView')}
+              </MenubarItem>
+              <MenubarItem disabled={!project} onClick={() => setCenterView('text')}>
+                {centerView === 'text' ? '✓ ' : ''}
+                {t('menu.textView')}
+                <MenubarShortcut>Ctrl+T</MenubarShortcut>
+              </MenubarItem>
+              <MenubarSeparator />
+              <MenubarItem onClick={() => setDiscreet(!discreet)}>
+                {discreet ? <Eye /> : <EyeOff />}
+                {discreet ? t('privacy.show') : t('privacy.hide')}
+                <MenubarShortcut>Ctrl+H</MenubarShortcut>
+              </MenubarItem>
             </MenubarContent>
           </MenubarMenu>
 
@@ -264,7 +284,7 @@ export function TitleBar() {
 
         <div className='min-w-0 flex-1' />
         <div className='pointer-events-none absolute inset-y-0 left-1/2 flex max-w-[40vw] min-w-16 -translate-x-1/2 items-center justify-center px-3 text-[11px] text-muted-foreground select-none'>
-          {project ? (
+          {project && !discreet ? (
             <span className='truncate'>
               <span className='font-medium text-foreground'>{project.name}</span>
               {page && (
@@ -279,6 +299,18 @@ export function TitleBar() {
           )}
         </div>
 
+        <button
+          type='button'
+          aria-pressed={discreet}
+          title={`${discreet ? t('privacy.show') : t('privacy.hide')} (Ctrl+H)`}
+          onClick={() => setDiscreet(!discreet)}
+          className={cn(
+            'relative z-10 mr-1 grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-primary/10',
+            discreet && 'text-primary',
+          )}
+        >
+          {discreet ? <EyeOff className='size-3.5' /> : <Eye className='size-3.5' />}
+        </button>
         {!macOS && <WindowControls />}
       </header>
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />

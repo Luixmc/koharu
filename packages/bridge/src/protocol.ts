@@ -76,6 +76,7 @@ export const commands = {
 	commitErase: (expectedRevision: Revision, layer: EntityId, points: Point[], diameter: number) => __TAURI_INVOKE<LayerCommit>("commit_erase", { expectedRevision, layer, points: points.map(i=>i), diameter }),
 	commitTransform: (expectedRevision: Revision, elements: TransformFrame[]) => __TAURI_INVOKE<number | null>("commit_transform", { expectedRevision, elements }).then((v) => (v==null?v:v as typeof v)),
 	commitInpaint: (expectedRevision: Revision, points: Point[], diameter: number) => __TAURI_INVOKE<string | null>("commit_inpaint", { expectedRevision, points: points.map(i=>i), diameter }),
+	getReviewNotes: () => __TAURI_INVOKE<ReviewNote[]>("get_review_notes"),
 };
 
 /* Types */
@@ -283,6 +284,15 @@ export type KoharuLayoutRFDetrSeg2XLConfig = {
 	text_threshold?: number | null,
 	bubble_threshold?: number | null,
 	panel_threshold?: number | null,
+	/**
+	 *  Take the text regions from ogkalu's comic-text-and-bubble-detector
+	 *  instead: the layout model boxes only one or two columns of a vertical
+	 *  Japanese balloon and misses balloons on dark backgrounds, so OCR reads
+	 *  half sentences. On Sakurami page 9 it found all 28 balloons whole in
+	 *  Japanese, Korean, Chinese and English. Bubbles, panels and onomatopoeia
+	 *  still come from the layout model.
+	 */
+	comic_text_detector?: boolean | null,
 };
 
 export type LanguageChoice = {
@@ -446,6 +456,21 @@ export type Quantization = {
 export type RasterLayerKind = "cleanup" | "paint";
 
 export type Reasoning = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+
+/**
+ *  One balloon the reviewer has something to say about, keyed by the id of
+ *  its text content.
+ */
+export type ReviewNote = {
+	content: string,
+	/**  Who speaks and to whom, as the reviewer read it. */
+	speaker: string | null,
+	/**  Why the reviewer is unsure of that reading. */
+	doubt: string | null,
+	/**  A correction awaiting approval in the panel. */
+	proposal: string | null,
+	reason: string | null,
+};
 
 export type Revision = number;
 
