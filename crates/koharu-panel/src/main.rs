@@ -59,6 +59,8 @@ enum After {
     ShowCorrections(PathBuf),
     /// Approve the proposals of this work folder (study → translate).
     ApproveProposals(PathBuf),
+    /// A project was just created: list it and select it.
+    SelectProject(PathBuf),
 }
 
 /// One proposed correction from `khr revisar`.
@@ -541,6 +543,40 @@ impl Panel {
         }
     }
 
+    /// A new project named after `folder`, with its images as pages.
+    fn create_project(&mut self, ctx: &egui::Context, folder: &Path) {
+        let name = folder
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let project = Path::new(PROJECTS_DIR).join(format!("{name}.khrproj"));
+        if project.exists() {
+            self.status = format!("Ya existe un proyecto llamado {name}.");
+            return;
+        }
+        let khr = self.khr.clone();
+        let (project_arg, folder_arg) = (
+            project.to_string_lossy().into_owned(),
+            folder.to_string_lossy().into_owned(),
+        );
+        self.lines.clear();
+        self.push(
+            &format!("[{name}] Crear el proyecto"),
+            &khr,
+            &[
+                "crear",
+                "--project",
+                &project_arg,
+                "--imagenes",
+                &folder_arg,
+            ],
+            false,
+            After::SelectProject(project),
+        );
+        self.begin(ctx);
+    }
+
     fn shut_down(&mut self) {
         let started = Command::new("shutdown")
             .args(["/s", "/t", SHUTDOWN_DELAY, "/c", "Koharu terminó la cola."])
@@ -699,6 +735,13 @@ impl Panel {
                 }
             }
             After::ApproveProposals(dir) => self.approve_all_in(&dir),
+            After::SelectProject(project) => {
+                self.reload_projects();
+                if let Some(index) = self.projects.iter().position(|path| *path == project) {
+                    self.selected = Some(index);
+                    self.project_changed();
+                }
+            }
         }
     }
 
@@ -1735,6 +1778,14 @@ impl eframe::App for Panel {
                     }
                     if ui.button("Recargar").clicked() {
                         self.reload_projects();
+                    }
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("Nuevo desde carpeta..."))
+                        .on_hover_text("Crea un proyecto con las imágenes de una carpeta, una página por imagen")
+                        .clicked()
+                        && let Some(folder) = rfd::FileDialog::new().pick_folder()
+                    {
+                        self.create_project(&ctx, &folder);
                     }
                 });
                 if changed {

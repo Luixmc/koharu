@@ -284,6 +284,17 @@ enum Command {
         solo: Vec<usize>,
     },
 
+    /// Create a project from a folder of images, one page per image in name
+    /// order, as the editor's "import folder" does.
+    Crear {
+        #[arg(short, long, value_name = "KHRPROJ")]
+        project: PathBuf,
+
+        /// Folder holding the page images (jpg, png, webp).
+        #[arg(long, value_name = "CARPETA")]
+        imagenes: PathBuf,
+    },
+
     /// Print the regions detection found on one page, as JSON, to draw them.
     Regiones {
         #[arg(short, long, value_name = "KHRPROJ")]
@@ -883,6 +894,70 @@ async fn run(
     Ok(())
 }
 
+async fn create(project: &PathBuf, images: &std::path::Path) -> Result<()> {
+    anyhow::ensure!(!project.exists(), "{} already exists", project.display());
+    let mut files: Vec<PathBuf> = std::fs::read_dir(images)
+        .with_context(|| format!("failed to read {}", images.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    ["jpg", "jpeg", "png", "webp"].contains(&extension.to_lowercase().as_str())
+                })
+        })
+        .collect();
+    anyhow::ensure!(!files.is_empty(), "no images in {}", images.display());
+    files.sort_by(|left, right| alphanumeric_sort::compare_path(left, right));
+
+    let mut pages = Vec::new();
+    for file in &files {
+        let bytes =
+            std::fs::read(file).with_context(|| format!("failed to read {}", file.display()))?;
+        let format = image::guess_format(&bytes)
+            .with_context(|| format!("unknown image format: {}", file.display()))?;
+        let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(&bytes), format)
+            .into_dimensions()
+            .with_context(|| format!("failed to read {}", file.display()))?;
+        let name = file
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        pages.push((name, bytes, format, width, height));
+    }
+
+    let mut session = Session::create(project)
+        .await
+        .with_context(|| format!("failed to create {}", project.display()))?;
+    let source = koharu_scene::AssetRole::new("source")?;
+    let patch = session.snapshot().patch(|edit| {
+        for (name, bytes, format, width, height) in pages {
+            let page = edit.add_page(
+                koharu_scene::PageDraft::new(name, f64::from(width), f64::from(height)),
+                koharu_scene::At::End,
+            )?;
+            edit.set_asset(
+                page,
+                &source,
+                koharu_scene::AssetInput::new(
+                    bytes,
+                    format.to_mime_type(),
+                    koharu_scene::AssetMetadata {
+                        width: Some(width),
+                        height: Some(height),
+                        attributes: Default::default(),
+                    },
+                ),
+            )?;
+        }
+        Ok(())
+    })?;
+    session.commit(patch).await?;
+    println!("{} página(s) en {}", files.len(), project.display());
+    Ok(())
+}
+
 /// The pages `stage` has not finished yet. Each stage commits page by page,
 /// so after a cut the finished pages carry its output: detection labels,
 /// recognized text, translations, or the cleanup layer of the inpainting.
@@ -975,6 +1050,7 @@ async fn main() -> Result<()> {
             pages,
             solo,
         } => clean(&project, pages, &solo).await,
+        Command::Crear { project, imagenes } => create(&project, &imagenes).await,
         Command::Regiones { project, page } => regions(&project, page).await,
         Command::Revisar {
             project,
