@@ -19,6 +19,7 @@ use super::{
     project::{
         CurrentProject, Page, PageSummary, Project, ProjectInfo, ProjectLibrary, ProjectSummary,
     },
+    work::Queue,
 };
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -180,7 +181,7 @@ pub(crate) async fn subscribe(
     })
 }
 
-async fn replace_project(handle: &AppHandle<CefRuntime>, opened: Project) -> Result<()> {
+pub(crate) async fn replace_project(handle: &AppHandle<CefRuntime>, opened: Project) -> Result<()> {
     let snapshot = opened.snapshot();
     let page = opened.active_page();
     let info = opened.info();
@@ -287,6 +288,12 @@ pub(crate) async fn open_project(
     handle: AppHandle<CefRuntime>,
 ) -> std::result::Result<(), Error> {
     let library = handle.state::<ProjectLibrary>().inner().clone();
+    if handle.state::<Queue>().holds(&library.path(&name)?) {
+        return Err(anyhow::anyhow!(
+            "khr is working on {name}; wait for its steps or remove it from the queue"
+        )
+        .into());
+    }
     let opened = library.open(&name).await?;
     replace_project(&handle, opened).await?;
     Ok(())
@@ -334,7 +341,7 @@ pub(crate) async fn delete_project(
     Ok(())
 }
 
-async fn close_current_project(handle: &AppHandle<CefRuntime>) -> Result<()> {
+pub(crate) async fn close_current_project(handle: &AppHandle<CefRuntime>) -> Result<()> {
     handle.state::<AgentState>().reset().await;
     let processing = handle.state::<Processing>();
     for stop in processing.stops.lock().values() {

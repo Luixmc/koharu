@@ -5,13 +5,13 @@
 //! for real errors: grammar, the wrong person or subject, a meaning the
 //! original does not carry, an ignored glossary term, words left untranslated.
 //! Nothing is written to the project. The proposals land in `correcciones.tsv`
-//! for the user to approve or reject in the panel, because the rewriting
+//! for the user to approve or reject in Koharu, because the rewriting
 //! corrector this replaces cost more good lines than it fixed.
 //!
 //! `aplicar` then writes the approved ones, as the user's own text.
 //!
 //! Next to the proposals goes `revision-paginas.tsv`, every balloon of every
-//! page in reading order, so the panel can show a proposal with the rest of
+//! page in reading order, so Koharu can show a proposal with the rest of
 //! its page around it: a line is hard to judge alone.
 //!
 //! The model first says who speaks each balloon and to whom, starting from
@@ -120,7 +120,10 @@ fn studied_speaker(note: Option<&PageNote>, source: &str) -> Option<String> {
         let value = value.trim();
         (!value.is_empty() && value != "?").then(|| value.to_owned())
     };
-    let balloon = note?.globos.iter().find(|balloon| balloon.original == source)?;
+    let balloon = note?
+        .globos
+        .iter()
+        .find(|balloon| balloon.original == source)?;
     let speaker = known(&balloon.habla)?;
     Some(match known(&balloon.a_quien) {
         Some(listener) => format!("{speaker} → {listener}"),
@@ -180,7 +183,10 @@ fn write_context(
                 id,
                 clean(&block.source),
                 translation,
-                speakers.get(&id).map(|speaker| clean(speaker)).unwrap_or_default()
+                speakers
+                    .get(&id)
+                    .map(|speaker| clean(speaker))
+                    .unwrap_or_default()
             ));
         }
     }
@@ -197,7 +203,11 @@ pub async fn context(project: &Path, right_to_left: bool) -> Result<()> {
     let pages = crate::estudio::pages_in_order(&session.snapshot(), right_to_left)?;
     let work = Work::of(project);
     write_context(&work, &pages, &BTreeMap::new())?;
-    println!("contexto de {} página(s) en {}", pages.len(), context_path(&work).display());
+    println!(
+        "contexto de {} página(s) en {}",
+        pages.len(),
+        context_path(&work).display()
+    );
     Ok(())
 }
 
@@ -247,9 +257,15 @@ fn schema() -> serde_json::Value {
 /// change but still sent it.
 fn talks_itself_out(reason: &str) -> bool {
     let reason = reason.to_lowercase();
-    ["no hay un error", "no hay error", "se puede dejar", "puede quedar", "está bien así"]
-        .iter()
-        .any(|phrase| reason.contains(phrase))
+    [
+        "no hay un error",
+        "no hay error",
+        "se puede dejar",
+        "puede quedar",
+        "está bien así",
+    ]
+    .iter()
+    .any(|phrase| reason.contains(phrase))
 }
 
 /// Pairs (balloon id, current translation) the user already turned down, so
@@ -335,7 +351,10 @@ pub async fn review(
                 serde_json::json!({"palabra": entry.word, "tipo": entry.kind, "significado": entry.meaning})
             })
             .collect();
-        let originals: Vec<&str> = balloons.iter().map(|(block, _)| block.source.as_str()).collect();
+        let originals: Vec<&str> = balloons
+            .iter()
+            .map(|(block, _)| block.source.as_str())
+            .collect();
         let source_slang_here: Vec<_> = source_slang
             .relevant(&originals)
             .into_iter()
@@ -431,7 +450,10 @@ pub async fn review(
             if skip.contains(&(id.clone(), clean(current))) {
                 continue;
             }
-            let speaker = speakers.get(&id).map(|speaker| clean(speaker)).unwrap_or_default();
+            let speaker = speakers
+                .get(&id)
+                .map(|speaker| clean(speaker))
+                .unwrap_or_default();
             found.push(Proposal {
                 speaker,
                 id,
@@ -448,7 +470,7 @@ pub async fn review(
 
     let mut text = String::from(
         "# Correcciones propuestas: id\tpágina\toriginal\tactual\tpropuesta\tmotivo\thabla\n\
-         # Apruébalas o recházalas desde el panel.\n",
+         # Apruébalas o recházalas desde Koharu.\n",
     );
     for p in &found {
         text.push_str(&format!(
@@ -459,7 +481,11 @@ pub async fn review(
     std::fs::create_dir_all(work.dir())?;
     std::fs::write(proposals_path(&work), text)?;
     write_context(&work, &pages, &speakers)?;
-    println!("{} propuesta(s) en {}", found.len(), proposals_path(&work).display());
+    println!(
+        "{} propuesta(s) en {}",
+        found.len(),
+        proposals_path(&work).display()
+    );
     Ok(())
 }
 
@@ -514,12 +540,15 @@ pub async fn apply(project: &Path) -> Result<()> {
     })?;
     session.commit(patch).await?;
     refresh_context(&work, &approved)?;
-    std::fs::write(&path, "# Correcciones aprobadas pendientes de aplicar: id\tpropuesta\n")?;
+    std::fs::write(
+        &path,
+        "# Correcciones aprobadas pendientes de aplicar: id\tpropuesta\n",
+    )?;
     println!("{} corrección(es) aplicada(s)", writes.len());
     Ok(())
 }
 
-/// Puts the applied text into the page context, so the panel does not show
+/// Puts the applied text into the page context, so Koharu does not show
 /// the old line around the next proposals.
 fn refresh_context(work: &Work, applied: &BTreeMap<String, String>) -> Result<()> {
     let Ok(text) = std::fs::read_to_string(context_path(work)) else {

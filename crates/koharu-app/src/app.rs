@@ -12,6 +12,7 @@ use crate::commands::{
     },
     processing::{JobChannel, Processing},
     project::{CurrentProject, ProjectLibrary},
+    work::Queue,
 };
 
 #[tracing::instrument(
@@ -128,6 +129,7 @@ pub fn run(context: tauri::Context<CefRuntime>) -> Result<()> {
             });
             application.manage(ProjectLibrary::new()?);
             application.manage(Processing::default());
+            application.manage(Queue::new());
             application.manage(CanvasChannel::default());
             application.manage(JobChannel::default());
             application.manage(DownloadChannel::default());
@@ -268,6 +270,8 @@ pub fn run(context: tauri::Context<CefRuntime>) -> Result<()> {
                 processing.stops.lock().clear();
                 processing.jobs.lock().clear();
                 window.state::<AgentState>().cancel_all();
+                // The queue file stays, so the steps left can be resumed.
+                window.state::<Queue>().abandon();
             }
             if matches!(event, WindowEvent::Destroyed) {
                 tracing::info!(

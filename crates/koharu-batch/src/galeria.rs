@@ -136,7 +136,11 @@ pub fn merge(notes: &mut UserNotes, gallery: &Gallery) {
 
 pub async fn run(input: &str, project: Option<&std::path::Path>) -> Result<()> {
     let gallery = fetch(input).await?;
-    eprintln!("gallery {}: {} tag(s)", gallery.galeria, gallery.etiquetas.len());
+    eprintln!(
+        "gallery {}: {} tag(s)",
+        gallery.galeria,
+        gallery.etiquetas.len()
+    );
     if let Some(project) = project {
         let work = Work::of(project);
         let mut notes = work.user_notes().unwrap_or_default();
@@ -155,12 +159,18 @@ mod tests {
     #[test]
     fn numbers_pairs_and_links_are_read() {
         assert_eq!(parse("618395"), Some((618395, None)));
-        assert_eq!(parse(" 618395/0439fa3666 "), Some((618395, Some("0439fa3666".to_owned()))));
+        assert_eq!(
+            parse(" 618395/0439fa3666 "),
+            Some((618395, Some("0439fa3666".to_owned())))
+        );
         assert_eq!(
             parse("https://e-hentai.org/g/618395/0439fa3666/"),
             Some((618395, Some("0439fa3666".to_owned())))
         );
-        assert_eq!(parse("https://exhentai.org/g/618395/"), Some((618395, None)));
+        assert_eq!(
+            parse("https://exhentai.org/g/618395/"),
+            Some((618395, None))
+        );
         assert_eq!(parse("hola"), None);
     }
 

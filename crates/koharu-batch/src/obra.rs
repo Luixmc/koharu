@@ -25,14 +25,20 @@ pub const WORKS_DIR: &str = r"I:\Koharu\obras";
 pub const GLOBAL_GLOSSARY: &str = r"I:\Koharu\glosario.tsv";
 const SOURCE_SLANG_DIR: &str = r"I:\Koharu\jerga-origen";
 
-/// Folder name for a project; the panel derives the same name.
+/// Folder name for a project; Koharu derives the same name.
 pub fn slug(project: &Path) -> String {
     project
         .file_stem()
         .unwrap_or_default()
         .to_string_lossy()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -115,10 +121,9 @@ impl Work {
             let text = std::fs::read_to_string(&file)
                 .with_context(|| format!("failed to read {}", file.display()))?;
             slang.entries.extend(
-                Glossary::parse(&text)
-                    .entries
-                    .into_iter()
-                    .filter(|entry| !glossary.contains(&entry.source) && !short_kana(&entry.source)),
+                Glossary::parse(&text).entries.into_iter().filter(|entry| {
+                    !glossary.contains(&entry.source) && !short_kana(&entry.source)
+                }),
             );
         }
         Ok(slang)
@@ -158,7 +163,7 @@ impl Work {
         if added > 0 {
             self.ensure_dir()?;
             let header = "# Propuestas pendientes: original<TAB>traducción<TAB>nota\n\
-                          # Apruébalas o recházalas desde el panel.\n";
+                          # Apruébalas o recházalas desde Koharu.\n";
             std::fs::write(
                 self.proposals_path(),
                 format!("{header}{}", pending.to_tsv()),
@@ -212,8 +217,11 @@ impl Work {
 
     pub fn write_baseline(&self, baseline: &BTreeMap<String, Machine>) -> Result<()> {
         self.ensure_dir()?;
-        std::fs::write(self.baseline_path(), serde_json::to_string_pretty(baseline)?)
-            .with_context(|| format!("failed to write {}", self.baseline_path().display()))
+        std::fs::write(
+            self.baseline_path(),
+            serde_json::to_string_pretty(baseline)?,
+        )
+        .with_context(|| format!("failed to write {}", self.baseline_path().display()))
     }
 }
 

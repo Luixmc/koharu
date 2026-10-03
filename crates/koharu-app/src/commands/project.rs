@@ -245,6 +245,11 @@ impl ProjectLibrary {
             .with_context(|| format!("failed to delete {}", path.display()))
     }
 
+    /// Where the project of that name lives, whether or not it exists yet.
+    pub(crate) fn path(&self, name: &str) -> Result<PathBuf> {
+        Ok(self.resolve(name)?.1)
+    }
+
     fn resolve(&self, name: &str) -> Result<(String, PathBuf)> {
         let name = validate_project_name(name)?;
         Ok((name.clone(), self.root.join(format!("{name}.khrproj"))))
@@ -254,6 +259,8 @@ impl ProjectLibrary {
 pub(crate) struct Project {
     pub(crate) session: Session,
     pub(crate) name: String,
+    /// The project file, which also names the work folder khr keeps beside it.
+    pub(crate) path: PathBuf,
     pub(crate) active_page: Option<EntityId>,
     pub(crate) undo: Vec<Vec<Revision>>,
     pub(crate) redo: Vec<Vec<Revision>>,
@@ -264,21 +271,22 @@ impl Project {
         let session = Session::create(&path)
             .await
             .with_context(|| format!("failed to create {}", path.display()))?;
-        Ok(Self::new(session, name))
+        Ok(Self::new(session, name, path))
     }
 
     pub(crate) async fn open(name: String, path: PathBuf) -> Result<Self> {
         let session = Session::open(&path)
             .await
             .with_context(|| format!("failed to open {}", path.display()))?;
-        Ok(Self::new(session, name))
+        Ok(Self::new(session, name, path))
     }
 
-    fn new(session: Session, name: String) -> Self {
+    fn new(session: Session, name: String, path: PathBuf) -> Self {
         let active_page = session.snapshot().pages().next().map(|page| page.id());
         Self {
             session,
             name,
+            path,
             active_page,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1377,7 +1385,7 @@ mod tests {
             .add_page(PageDraft::new("manual", 100.0, 100.0), At::End)
             .unwrap();
         session.commit(setup.finish().unwrap()).await.unwrap();
-        let mut project = Project::new(session, "test".to_owned());
+        let mut project = Project::new(session, "test".to_owned(), PathBuf::new());
 
         let base = project.snapshot();
         let pipeline = base

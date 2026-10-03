@@ -207,7 +207,9 @@ pub async fn run(options: Options) -> Result<()> {
         anyhow::ensure!(!file.casos.is_empty(), "no case in language `{only}`");
     }
 
-    let pipeline = koharu_config::load::<PipelineConfig>("pipeline")?.read()?.clone();
+    let pipeline = koharu_config::load::<PipelineConfig>("pipeline")?
+        .read()?
+        .clone();
     let providers = koharu_config::load::<ProvidersConfig>("providers")?;
     let selection = match provider.as_str() {
         "deepl" => ModelSelection {
@@ -321,7 +323,10 @@ pub async fn run(options: Options) -> Result<()> {
                     case.trampa
                 );
                 if corrector.is_some() && reply != translated_last {
-                    eprintln!("      {} -> {translated_last:?} -> {reply:?}", case.reference);
+                    eprintln!(
+                        "      {} -> {translated_last:?} -> {reply:?}",
+                        case.reference
+                    );
                 } else {
                     eprintln!("      {} -> {reply:?}", case.reference);
                 }

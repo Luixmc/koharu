@@ -32,6 +32,7 @@ export type InspectorSection = 'copy' | 'type' | 'layers'
 export type ShortcutAction = CanvasTool | 'fit'
 export type Shortcuts = Record<ShortcutAction, string>
 export type PipelineScope = 'page' | 'selected-pages' | 'project'
+export type CenterView = 'canvas' | 'text'
 export const pipelineStages: readonly Stage[] = ['detection', 'ocr', 'translation', 'inpainting']
 
 interface KoharuStore {
@@ -56,12 +57,20 @@ interface KoharuStore {
   processingScope: PipelineScope
   processingStages: Stage[]
   settingsOpen: boolean
+  /** The work page: khr's steps, the ficha, glossary and corrections. */
+  workOpen: boolean
   shortcuts: Shortcuts
+  /** Page images retracted: the canvas is covered and thumbnails are not drawn. */
+  discreet: boolean
+  centerView: CenterView
   selectPages: (pages: EntityId[]) => void
   showInspector: (section: InspectorSection) => void
   setProcessingScope: (scope: PipelineScope) => void
   setProcessingStages: (stages: Stage[]) => void
   setSettingsOpen: (open: boolean) => void
+  setWorkOpen: (open: boolean) => void
+  setDiscreet: (discreet: boolean) => void
+  setCenterView: (view: CenterView) => void
   selectLayers: (layers: EntityId[]) => void
   setTool: (tool: CanvasTool) => void
   setBrush: (brush: CanvasBrush) => void
@@ -70,6 +79,8 @@ interface KoharuStore {
   dismissJob: (id: string) => void
   dismissDownload: (id: number) => void
 }
+
+const discreetKey = 'koharu.discreet'
 
 export const defaultShortcuts: Shortcuts = {
   select: 'v',
@@ -104,12 +115,21 @@ export const useKoharuStore = create<KoharuStore>()((set) => ({
   processingScope: 'selected-pages',
   processingStages: [...pipelineStages],
   settingsOpen: false,
+  workOpen: false,
   shortcuts: defaultShortcuts,
+  discreet: readFlag(discreetKey),
+  centerView: 'canvas',
   selectPages: (selectedPages) => set({ selectedPages: [...new Set(selectedPages)] }),
   showInspector: (inspector) => set({ inspector }),
   setProcessingScope: (processingScope) => set({ processingScope }),
   setProcessingStages: (processingStages) => set({ processingStages }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setWorkOpen: (workOpen) => set({ workOpen }),
+  setDiscreet: (discreet) => {
+    writeFlag(discreetKey, discreet)
+    set({ discreet })
+  },
+  setCenterView: (centerView) => set({ centerView }),
   selectLayers: (selectedLayers) => set({ selectedLayers: [...new Set(selectedLayers)] }),
   setTool: (tool) => set({ tool }),
   setBrush: (brush) => set({ brush }),
@@ -131,6 +151,24 @@ export const useKoharuStore = create<KoharuStore>()((set) => ({
       return { downloads }
     }),
 }))
+
+// The choice survives restarts so the app never opens showing pages the user
+// had hidden. Storage may be unavailable; that only loses the memory.
+function readFlag(key: string): boolean {
+  try {
+    return globalThis.localStorage?.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeFlag(key: string, value: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(key, value ? '1' : '0')
+  } catch {
+    // Not remembered; the current session still honors it.
+  }
+}
 
 export function receiveStartupState(state: StartupState): void {
   useKoharuStore.setState({
