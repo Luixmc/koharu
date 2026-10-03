@@ -15,6 +15,17 @@ pub struct Pipeline {
     current: Arc<ArcSwap<StageRunner>>,
     resources: Arc<ResourceMonitor>,
     execution: Arc<tokio::sync::Mutex<()>>,
+    _watcher: Arc<Watcher>,
+}
+
+/// Ends the configuration watcher, and the translator it holds, with the last
+/// `Pipeline` clone.
+struct Watcher(tokio::task::JoinHandle<()>);
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 impl Pipeline {
@@ -39,13 +50,19 @@ impl Pipeline {
             StageRunner::new(&value, translator.clone(), &device, resources.clone())?
         };
         let current = Arc::new(ArcSwap::from_pointee(runner));
-        let watched = current.clone();
+        // The watcher owns `config`, whose sender keeps `changed()` pending
+        // forever; a strong handle here would keep every stage model resident
+        // after the last `Pipeline` is dropped.
+        let watched = Arc::downgrade(&current);
         let watched_resources = resources.clone();
-        let _watcher = tokio::runtime::Handle::try_current()
+        let watcher = tokio::runtime::Handle::try_current()
             .context("pipeline requires a Tokio runtime")?
             .spawn(async move {
                 let mut changes = config.subscribe();
                 while changes.changed().await.is_ok() {
+                    let Some(watched) = watched.upgrade() else {
+                        break;
+                    };
                     let runner = config.read().and_then(|value| {
                         StageRunner::new(
                             &value,
@@ -64,6 +81,7 @@ impl Pipeline {
             current,
             resources,
             execution: Arc::new(tokio::sync::Mutex::new(())),
+            _watcher: Arc::new(Watcher(watcher)),
         })
     }
 
