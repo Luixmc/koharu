@@ -1,18 +1,35 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
-import { Cpu, Download, GraduationCap, LoaderCircle, Play, Plus, RotateCcw } from 'lucide-react'
+import {
+  Cpu,
+  Download,
+  FolderOpen,
+  FolderTree,
+  GraduationCap,
+  LoaderCircle,
+  Play,
+  Plus,
+  RotateCcw,
+  X,
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { call } from '@/lib/backend'
+import { queryClient } from '@/lib/queries'
 import {
   languageOf,
   llmModelsQuery,
+  modelChoicesKey,
+  modelChoicesQuery,
+  modelTasks,
   ocrName,
   recommendationsQuery,
+  useProjectList,
   useWork,
   useWorkStore,
+  withInstalledModels,
 } from '@/lib/work'
 import {
   commands,
@@ -37,15 +54,19 @@ const stages: readonly KoharuStage[] = ['detection', 'ocr', 'inpainting']
 const languages: readonly SourceLanguage[] = ['ja', 'ko', 'zh', 'en']
 const deepl = '__deepl__'
 
-/** The catalog task whose measurements matter for each model choice. */
-type ModelRole = 'study' | 'translation' | 'review'
-const roleTask: Record<ModelRole, string> = {
-  study: 'corregir',
-  translation: 'traducir',
-  review: 'corregir',
-}
+type ModelRole = keyof typeof modelTasks
 
-export function ProcessTab({ project }: { project: string }) {
+/**
+ * The steps and their options for the project on the page or, in batch mode,
+ * for a list of folders that each become a project.
+ */
+export function ProcessTab({
+  project,
+  batch = false,
+}: {
+  project: string | null
+  batch?: boolean
+}) {
   const { t } = useTranslation()
   const work = useWork(project).data
   const queue = useWorkStore((state) => state.queue)
@@ -60,27 +81,29 @@ export function ProcessTab({ project }: { project: string }) {
   const [fetching, setFetching] = useState(false)
   const [tags, setTags] = useState('')
   const [description, setDescription] = useState('')
-  const [models, setModels] = useState<ModelChoices | null>(null)
+  const saved = useQuery(modelChoicesQuery).data
+  // LM Studio closed: the saved choices stand as they are.
+  const listed = useQuery(llmModelsQuery)
+  const installed = listed.data ?? (listed.isError ? [] : undefined)
+  const models =
+    saved && installed ? withInstalledModels(saved, installed, recommendations?.models ?? []) : null
   const [pages, setPages] = useState(0)
   const [language, setLanguage] = useState<SourceLanguage>('ja')
   const leftToRight = useWorkStore((state) => state.leftToRight)
   const setLeftToRight = useWorkStore((state) => state.setLeftToRight)
   const loadedNotes = useRef<string | null>(null)
-
-  useEffect(() => {
-    void call(commands.getModelChoices)
-      .then(setModels)
-      .catch(() => undefined)
-  }, [])
+  const folders = useWorkStore((state) => state.folders)
+  const setFolders = useWorkStore((state) => state.setFolders)
 
   // Everything about the work belongs to it: a switch reloads it.
   useEffect(() => {
     setGallery('')
+    if (!project) return
     const guessed = languageOf(project)
     if (guessed) setLanguage(guessed)
   }, [project])
   useEffect(() => {
-    if (!work || loadedNotes.current === project) return
+    if (!project || !work || loadedNotes.current === project) return
     loadedNotes.current = project
     setTags(work.notes.tags.join(', '))
     setDescription(work.notes.description)
@@ -93,10 +116,12 @@ export function ProcessTab({ project }: { project: string }) {
       .filter(Boolean),
     description: description.trim(),
   })
-  const saveNotes = () => void call(commands.saveUserNotes, project, notes()).catch(() => undefined)
+  const saveNotes = () => {
+    if (project) void call(commands.saveUserNotes, project, notes()).catch(() => undefined)
+  }
 
   const changeModels = (next: ModelChoices) => {
-    setModels(next)
+    queryClient.setQueryData(modelChoicesKey, next)
     void call(commands.saveModelChoices, next).catch(() => undefined)
   }
 
@@ -114,10 +139,15 @@ export function ProcessTab({ project }: { project: string }) {
     }
   }
 
+  const addFolders = async (inside: boolean) => {
+    const picked = await call(commands.pickBatchFolders, inside)
+    setFolders((current) => [...current, ...picked.filter((folder) => !current.includes(folder))])
+  }
+
   const run = () => {
     if (!models) return
-    void call(commands.enqueue, {
-      project,
+    const plan = {
+      project: project ?? '',
       stages: stages.filter((stage) => ticked.includes(stage)),
       study,
       gallery,
@@ -128,7 +158,14 @@ export function ProcessTab({ project }: { project: string }) {
       pages,
       language,
       left_to_right: leftToRight,
-    }).catch(() => undefined)
+    }
+    if (batch) {
+      void call(commands.enqueueBatch, folders, plan)
+        .then(() => setFolders(() => []))
+        .catch(() => undefined)
+    } else {
+      void call(commands.enqueue, plan).catch(() => undefined)
+    }
   }
 
   return (
@@ -161,6 +198,17 @@ export function ProcessTab({ project }: { project: string }) {
         </div>
       )}
 
+      {batch && (
+        <FolderList
+          folders={folders}
+          onAdd={(inside) => void addFolders(inside).catch(() => undefined)}
+          onRemove={(folder) =>
+            setFolders((current) => current.filter((value) => value !== folder))
+          }
+          onClear={() => setFolders(() => [])}
+        />
+      )}
+
       <div className='grid gap-8 lg:grid-cols-2'>
         <section className='grid content-start gap-3'>
           <h2 className='text-[12px] font-semibold'>{t('work.process.steps')}</h2>
@@ -177,7 +225,10 @@ export function ProcessTab({ project }: { project: string }) {
             />
           ))}
           <Tick checked={study} onChange={setStudy} label={t('work.process.study')} />
-          {study && (
+          {study && batch && (
+            <p className='ml-6 text-[11px] text-muted-foreground'>{t('work.batch.studyHint')}</p>
+          )}
+          {study && !batch && (
             <div className='ml-6 grid gap-2 rounded-xl border border-border/80 bg-[var(--surface-panel)] p-3'>
               <p className='text-[11px] text-muted-foreground'>{t('work.process.notesHint')}</p>
               <div className='flex gap-2'>
@@ -256,7 +307,7 @@ export function ProcessTab({ project }: { project: string }) {
               />
             </>
           )}
-          <Field label={t('work.process.language')}>
+          <Field label={batch ? t('work.batch.language') : t('work.process.language')}>
             <Select
               value={language}
               items={Object.fromEntries(
@@ -276,6 +327,11 @@ export function ProcessTab({ project }: { project: string }) {
               </SelectContent>
             </Select>
           </Field>
+          {batch && (
+            <p className='-mt-1 text-[10px] text-muted-foreground'>
+              {t('work.batch.languageHint')}
+            </p>
+          )}
           {recommendations?.ocr[language] && (
             <p className='-mt-1 text-[10px] text-muted-foreground'>
               {t('work.process.ocrHint', { ocr: ocrName(recommendations.ocr[language]) })}
@@ -303,38 +359,49 @@ export function ProcessTab({ project }: { project: string }) {
           type='button'
           size='sm'
           className='h-9 gap-1.5 text-[12px]'
-          disabled={!models}
+          disabled={!models || (batch && folders.length === 0)}
           onClick={run}
         >
           {busy ? <Plus className='size-3.5' /> : <Play className='size-3.5' />}
-          {busy ? t('work.process.enqueue') : t('work.process.run')}
+          {batch
+            ? t('work.batch.run', { count: folders.length })
+            : busy
+              ? t('work.process.enqueue')
+              : t('work.process.run')}
         </Button>
-        <Button
-          type='button'
-          variant='outline'
-          size='sm'
-          className='h-9 gap-1.5 text-[12px]'
-          disabled={!models}
-          title={t('work.process.learnHint')}
-          onClick={() =>
-            models &&
-            void call(commands.learnFromCorrections, project, models.translation).catch(
-              () => undefined,
-            )
-          }
-        >
-          <GraduationCap className='size-3.5' /> {t('work.process.learn')}
-        </Button>
-        <Button
-          type='button'
-          variant='outline'
-          size='sm'
-          className='h-9 gap-1.5 text-[12px]'
-          title={t('work.process.exportHint')}
-          onClick={() => void call(commands.exportPages, project).catch(() => undefined)}
-        >
-          <Download className='size-3.5' /> {t('work.process.export')}
-        </Button>
+        {batch && (
+          <span className='text-[11px] text-muted-foreground'>{t('work.batch.failureHint')}</span>
+        )}
+        {!batch && project && (
+          <>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='h-9 gap-1.5 text-[12px]'
+              disabled={!models}
+              title={t('work.process.learnHint')}
+              onClick={() =>
+                models &&
+                void call(commands.learnFromCorrections, project, models.translation).catch(
+                  () => undefined,
+                )
+              }
+            >
+              <GraduationCap className='size-3.5' /> {t('work.process.learn')}
+            </Button>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='h-9 gap-1.5 text-[12px]'
+              title={t('work.process.exportHint')}
+              onClick={() => void call(commands.exportPages, project).catch(() => undefined)}
+            >
+              <Download className='size-3.5' /> {t('work.process.export')}
+            </Button>
+          </>
+        )}
         <Button
           type='button'
           variant='ghost'
@@ -348,6 +415,92 @@ export function ProcessTab({ project }: { project: string }) {
 
       <Log />
     </div>
+  )
+}
+
+/** The folders of a batch; those whose project exists are marked. */
+function FolderList({
+  folders,
+  onAdd,
+  onRemove,
+  onClear,
+}: {
+  folders: string[]
+  onAdd: (inside: boolean) => void
+  onRemove: (folder: string) => void
+  onClear: () => void
+}) {
+  const { t } = useTranslation()
+  const projects = useProjectList().data ?? []
+  const nameOf = (folder: string) => folder.split(/[\\/]/).filter(Boolean).pop() ?? folder
+
+  return (
+    <section className='grid gap-3'>
+      <div className='grid gap-1'>
+        <h2 className='text-[12px] font-semibold'>{t('work.batch.title')}</h2>
+        <p className='text-[11px] text-muted-foreground'>{t('work.batch.intro')}</p>
+      </div>
+      <div className='flex flex-wrap items-center gap-2'>
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          className='h-8 gap-1.5 text-[11px]'
+          onClick={() => onAdd(false)}
+        >
+          <FolderOpen className='size-3.5' /> {t('work.batch.addFolders')}
+        </Button>
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          className='h-8 gap-1.5 text-[11px]'
+          title={t('work.batch.addInsideHint')}
+          onClick={() => onAdd(true)}
+        >
+          <FolderTree className='size-3.5' /> {t('work.batch.addInside')}
+        </Button>
+        <Button
+          type='button'
+          variant='ghost'
+          size='sm'
+          className='h-8 text-[11px]'
+          disabled={folders.length === 0}
+          onClick={onClear}
+        >
+          {t('work.batch.clear')}
+        </Button>
+      </div>
+      <div className='rounded-xl border border-border/80 bg-[var(--surface-panel)] p-2'>
+        {folders.length === 0 && (
+          <p className='px-1 py-1 text-[11px] text-muted-foreground'>{t('work.batch.empty')}</p>
+        )}
+        {folders.map((folder) => {
+          const name = nameOf(folder)
+          return (
+            <div key={folder} className='flex items-center gap-2 px-1 py-0.5 text-[11px]'>
+              <span className='font-medium'>{name}</span>
+              {projects.some((project) => project.name === name) && (
+                <span className='rounded bg-primary/15 px-1 text-[9px] text-primary'>
+                  {t('work.batch.exists')}
+                </span>
+              )}
+              <span className='min-w-0 flex-1 truncate text-muted-foreground'>{folder}</span>
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon'
+                className='size-6'
+                aria-label={t('work.batch.remove', { folder: name })}
+                onClick={() => onRemove(folder)}
+              >
+                <X className='size-3' />
+              </Button>
+            </div>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 
@@ -396,7 +549,7 @@ function ModelRow({
   const installed = useQuery(llmModelsQuery).data ?? []
   const catalog = useQuery(recommendationsQuery).data?.models ?? []
   const setTab = useWorkStore((state) => state.setTab)
-  const task = roleTask[role]
+  const task = modelTasks[role]
   // A saved model that is no longer installed stays visible, so the menu
   // never shows a choice that differs from what would run.
   const names = [...installed]

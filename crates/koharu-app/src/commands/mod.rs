@@ -109,6 +109,8 @@ pub fn bindings() -> tauri_specta::Builder<tauri_runtime_cef::CefRuntime> {
             canvas::commit_inpaint,
             work::subscribe_queue,
             work::enqueue,
+            work::enqueue_batch,
+            work::pick_batch_folders,
             work::learn_from_corrections,
             work::export_pages,
             work::read_page_context,

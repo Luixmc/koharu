@@ -19,7 +19,7 @@ use tauri_runtime_cef::CefRuntime;
 use super::Error;
 use super::project::{CurrentProject, ProjectLibrary};
 use files::{Correction, ReviewNote, Term, UserNotes, Work};
-use plan::{ModelChoices, Plan};
+use plan::{ModelChoices, Plan, SourceLanguage, Target};
 pub(crate) use queue::Queue;
 use queue::{QueueEvent, QueueSnapshot, Step};
 
@@ -46,9 +46,110 @@ pub(crate) fn enqueue(
     queue: State<'_, Queue>,
 ) -> CommandResult<()> {
     let project = library.path(&plan.project)?;
-    let steps = plan::steps(&plan, &project)?;
+    let target = Target {
+        project: project.clone(),
+        language: plan.language,
+        images: None,
+    };
+    let mut steps = plan::steps(&plan, std::slice::from_ref(&target))?;
+    if plan.study {
+        // The study reads the user's notes from the work folder.
+        files::write_notes(&files::dir(&project), &plan.notes)?;
+    }
+    steps.splice(0..0, plan::gallery(&plan, &project));
     queue.push(&handle, steps);
     Ok(())
+}
+
+/// Batch mode: a project per folder of images, created when it does not
+/// exist yet, and `plan` run over all of them. Each work studies with the
+/// notes it already has; the plan's project, gallery and notes are not used.
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn enqueue_batch(
+    folders: Vec<String>,
+    plan: Plan,
+    handle: AppHandle<CefRuntime>,
+    library: State<'_, ProjectLibrary>,
+    queue: State<'_, Queue>,
+) -> CommandResult<()> {
+    let mut targets: Vec<Target> = Vec::new();
+    for folder in folders {
+        let folder = PathBuf::from(folder);
+        let name = folder
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| anyhow!("{} no es una carpeta.", folder.display()))?;
+        let project = library.path(&name)?;
+        if targets.iter().any(|target| target.project == project) {
+            return Err(anyhow!("Hay dos carpetas llamadas {name}: renombra una.").into());
+        }
+        if queue.holds(&project) {
+            return Err(anyhow!("{name} ya está en la cola.").into());
+        }
+        let images = (!project.exists()).then_some(folder);
+        targets.push(Target {
+            language: SourceLanguage::of(&name).unwrap_or(plan.language),
+            project,
+            images,
+        });
+    }
+    let steps = plan::steps(&plan, &targets)?;
+    queue.push(&handle, steps);
+    Ok(())
+}
+
+/// Folders for the batch. With `inside`, the one chosen holds the works, one
+/// subfolder each, and its subfolders are returned.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn pick_batch_folders(
+    inside: bool,
+    window: WebviewWindow<CefRuntime>,
+) -> CommandResult<Vec<String>> {
+    let dialog = rfd::AsyncFileDialog::new().set_parent(&window);
+    let picked: Vec<PathBuf> = if inside {
+        match dialog.pick_folder().await {
+            Some(parent) => {
+                let mut found: Vec<PathBuf> = std::fs::read_dir(parent.path())
+                    .with_context(|| parent.path().display().to_string())?
+                    .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                    .filter(|path| path.is_dir())
+                    .collect();
+                found.sort();
+                found
+            }
+            None => Vec::new(),
+        }
+    } else {
+        dialog
+            .pick_folders()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|folder| folder.path().to_path_buf())
+            .collect()
+    };
+    // Only folders with pages, as `khr crear` takes them.
+    Ok(picked
+        .into_iter()
+        .filter(|folder| has_images(folder))
+        .map(|folder| folder.display().to_string())
+        .collect())
+}
+
+fn has_images(folder: &std::path::Path) -> bool {
+    std::fs::read_dir(folder).is_ok_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    ["jpg", "jpeg", "png", "webp"].contains(&extension.to_lowercase().as_str())
+                })
+        })
+    })
 }
 
 #[tauri::command]

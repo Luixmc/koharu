@@ -78,6 +78,17 @@ export const commands = {
 	commitInpaint: (expectedRevision: Revision, points: Point[], diameter: number) => __TAURI_INVOKE<string | null>("commit_inpaint", { expectedRevision, points: points.map(i=>i), diameter }),
 	subscribeQueue: (onEvent: Channel<QueueEvent>) => __TAURI_INVOKE<QueueSnapshot>("subscribe_queue", { onEvent }).then((v) => (({...v,state:({...v.state,running:v.state.running==null?v.state.running:({...v.state.running,progress:v.state.running.progress==null?v.state.running.progress:({...v.state.running.progress,first:v.state.running.progress.first==null?v.state.running.progress.first:v.state.running.progress.first})})})}) as typeof v)),
 	enqueue: (plan: Plan) => __TAURI_INVOKE<null>("enqueue", { plan }),
+	/**
+	 *  Batch mode: a project per folder of images, created when it does not
+	 *  exist yet, and `plan` run over all of them. Each work studies with the
+	 *  notes it already has; the plan's project, gallery and notes are not used.
+	 */
+	enqueueBatch: (folders: string[], plan: Plan) => __TAURI_INVOKE<null>("enqueue_batch", { folders, plan }),
+	/**
+	 *  Folders for the batch. With `inside`, the one chosen holds the works, one
+	 *  subfolder each, and its subfolders are returned.
+	 */
+	pickBatchFolders: (inside: boolean) => __TAURI_INVOKE<string[]>("pick_batch_folders", { inside }),
 	learnFromCorrections: (project: string, model: string) => __TAURI_INVOKE<null>("learn_from_corrections", { project, model }),
 	/**
 	 *  Renders the finished pages with khr one at a time; exporting every page

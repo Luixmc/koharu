@@ -571,7 +571,8 @@
       "ficha": "Ficha",
       "glossary": "Glosario",
       "corrections": "Correcciones",
-      "models": "Modelos"
+      "models": "Modelos",
+      "batch": "Lote"
     },
     "next": {
       "process": "Siguiente: pasos 1-6 con el idioma original correcto, o añade el proyecto a la cola.",
@@ -701,6 +702,23 @@
       "download": "Descargar",
       "measured": "Medido ({{task}}): {{verdict}}",
       "untested": "Sin probar."
+    },
+    "batch": {
+      "title": "Modo por lotes",
+      "intro": "Cada carpeta de imágenes se vuelve un proyecto con su nombre, una página por imagen, y pasa por los pasos marcados. Si el proyecto ya existe, se usa tal cual.",
+      "folders": "Carpetas",
+      "addFolders": "Añadir carpetas…",
+      "addInside": "Añadir las subcarpetas de…",
+      "addInsideHint": "Elige una carpeta que tenga una obra por subcarpeta",
+      "clear": "Vaciar",
+      "remove": "Quitar {{folder}}",
+      "empty": "Añade carpetas con imágenes (jpg, png o webp).",
+      "exists": "ya existe",
+      "studyHint": "Cada obra se estudia con las notas que ya tenga; para darle etiquetas o descripción, ábrela en Procesar antes.",
+      "language": "Idioma (si el nombre no lo dice)",
+      "languageHint": "Un nombre que termina en JA, KO, ZH o EN usa ese idioma.",
+      "run": "Procesar {{count}} carpeta(s)",
+      "failureHint": "Si una obra falla se cancela solo esa; las demás siguen."
     }
   }
 }

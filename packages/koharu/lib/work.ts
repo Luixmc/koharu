@@ -6,6 +6,8 @@ import { create } from 'zustand'
 
 import {
   commands,
+  type CatalogModel,
+  type ModelChoices,
   type QueueEvent,
   type QueueState,
   type SourceLanguage,
@@ -16,7 +18,7 @@ import { queryClient, refresh } from './queries'
 
 const maxLines = 5000
 
-export type WorkTab = 'process' | 'ficha' | 'glossary' | 'corrections' | 'models'
+export type WorkTab = 'process' | 'batch' | 'ficha' | 'glossary' | 'corrections' | 'models'
 
 interface WorkStore {
   queue: QueueState | null
@@ -26,9 +28,12 @@ interface WorkStore {
   tab: WorkTab
   /** Western reading order; unticked is manga order. */
   leftToRight: boolean
+  /** The folders of the batch, each a work to create and process. */
+  folders: string[]
   setProject: (project: string | null) => void
   setTab: (tab: WorkTab) => void
   setLeftToRight: (leftToRight: boolean) => void
+  setFolders: (folders: (current: string[]) => string[]) => void
 }
 
 export const useWorkStore = create<WorkStore>()((set) => ({
@@ -37,15 +42,18 @@ export const useWorkStore = create<WorkStore>()((set) => ({
   project: null,
   tab: 'process',
   leftToRight: false,
+  folders: [],
   setProject: (project) => set({ project }),
   setTab: (tab) => set({ tab }),
   setLeftToRight: (leftToRight) => set({ leftToRight }),
+  setFolders: (folders) => set((state) => ({ folders: folders(state.folders) })),
 }))
 
 export const workKey = (project: string) => ['work', project] as const
 export const projectListKey = ['project-list'] as const
 export const llmModelsKey = ['llm-models'] as const
 export const recommendationsKey = ['recommendations'] as const
+export const modelChoicesKey = ['model-choices'] as const
 
 export function useWork(project: string | null) {
   return useQuery({
@@ -68,6 +76,45 @@ export const recommendationsQuery = queryOptions({
   queryKey: recommendationsKey,
   queryFn: () => call(commands.getRecommendations),
 })
+
+/** The LM Studio model of each step, shared by the work and batch tabs. */
+export const modelChoicesQuery = queryOptions({
+  queryKey: modelChoicesKey,
+  queryFn: () => call(commands.getModelChoices),
+})
+
+/** The catalog task whose measurements matter for each step's model. */
+export const modelTasks = {
+  study: 'corregir',
+  translation: 'traducir',
+  review: 'corregir',
+} as const
+
+/**
+ * The choices with every model that is not installed replaced by one that
+ * is: the first the catalog measured for that step, else the first
+ * installed. With nothing installed (LM Studio closed) they stay as they are.
+ */
+export function withInstalledModels(
+  choices: ModelChoices,
+  installed: string[],
+  catalog: CatalogModel[],
+): ModelChoices {
+  if (installed.length === 0) return choices
+  const pick = (current: string, task: string) => {
+    if (installed.includes(current)) return current
+    const measured = installed.find((name) =>
+      catalog.some((model) => model.id === name && model.measured[task]),
+    )
+    return measured ?? installed[0]
+  }
+  return {
+    ...choices,
+    study: pick(choices.study, modelTasks.study),
+    translation: pick(choices.translation, modelTasks.translation),
+    review: pick(choices.review, modelTasks.review),
+  }
+}
 
 /** Projects named "... JA", "... KO", "... ZH" or "... EN" set their language. */
 export function languageOf(project: string): SourceLanguage | null {
@@ -107,6 +154,8 @@ function receive(event: QueueEvent): void {
       useWorkStore.setState({ log: [] })
       break
     case 'work_changed':
+      // A batch creates its projects as it goes.
+      void queryClient.invalidateQueries({ queryKey: projectListKey })
       void queryClient.invalidateQueries({ queryKey: workKey(event.project) })
       void queryClient.invalidateQueries({ queryKey: ['review-notes'] })
       break

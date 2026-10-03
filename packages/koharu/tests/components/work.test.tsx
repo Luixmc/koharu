@@ -28,7 +28,7 @@ const work: Work = {
   next: { kind: 'proposals', count: 1 },
 }
 
-function renderWork() {
+function renderWork(installed = ['cydonia', 'gemma']) {
   vi.spyOn(commands, 'getProject').mockResolvedValue(null)
   vi.spyOn(commands, 'listProjects').mockResolvedValue([{ name: 'Sakurami JA' }])
   vi.spyOn(commands, 'getWork').mockResolvedValue(work)
@@ -38,7 +38,7 @@ function renderWork() {
     deepl: false,
     review: 'cydonia',
   })
-  vi.spyOn(commands, 'getLlmModels').mockResolvedValue(['cydonia', 'gemma'])
+  vi.spyOn(commands, 'getLlmModels').mockResolvedValue(installed)
   vi.spyOn(commands, 'getRecommendations').mockResolvedValue({
     ocr: { ja: 'baberu-ocr', ko: 'hayai-ocr', zh: 'paddleocr-vl-1.6', en: 'paddleocr-vl-1.6' },
     models: [
@@ -72,7 +72,27 @@ function renderWork() {
 describe('WorkPage', () => {
   afterEach(() => {
     vi.restoreAllMocks()
-    useWorkStore.setState({ project: null, tab: 'process', queue: null, log: [] })
+    useWorkStore.setState({ project: null, tab: 'process', queue: null, log: [], folders: [] })
+  })
+
+  it('creates and processes a batch of folders with the installed models', async () => {
+    queryClient.clear()
+    const enqueueBatch = vi.spyOn(commands, 'enqueueBatch').mockResolvedValue(null)
+    const picked = ['D:\\Obras\\Uno KO', 'D:\\Obras\\Dos']
+    vi.spyOn(commands, 'pickBatchFolders').mockResolvedValue(picked)
+    renderWork(['gemma'])
+    fireEvent.click(await screen.findByRole('button', { name: 'Batch' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add folders…' }))
+    expect(await screen.findByText('Uno KO')).toBeInTheDocument()
+    const run = screen.getByRole('button', { name: 'Process 2 folder(s)' })
+    await waitFor(() => expect(run).toBeEnabled())
+    fireEvent.click(run)
+    await waitFor(() => expect(enqueueBatch).toHaveBeenCalled())
+    const [folders, plan] = enqueueBatch.mock.calls[0]
+    expect(folders).toEqual(picked)
+    // Only Gemma is installed: every step uses it.
+    expect(plan.models).toMatchObject({ study: 'gemma', translation: 'gemma', review: 'gemma' })
+    await waitFor(() => expect(screen.queryByText('Uno KO')).not.toBeInTheDocument())
   })
 
   it('queues the ticked steps with the language the project name gives', async () => {

@@ -5,6 +5,7 @@ import {
   BookOpen,
   Boxes,
   FolderInput,
+  Layers,
   ListChecks,
   PencilLine,
   Play,
@@ -36,6 +37,7 @@ import {
 
 const tabs = [
   ['process', Play],
+  ['batch', Layers],
   ['ficha', BookOpen],
   ['glossary', ListChecks],
   ['corrections', PencilLine],
@@ -142,9 +144,9 @@ export function WorkPage() {
       <main className='relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden rounded-tl-2xl bg-[var(--surface-canvas)] shadow-[var(--shadow-content)]'>
         <header className='flex h-14 shrink-0 items-center gap-3 border-b border-border/80 px-8'>
           <h1 className='min-w-0 truncate text-[13px] font-semibold tracking-[-0.02em]'>
-            {project ?? t('work.noProject')}
+            {tab === 'batch' ? t('work.batch.title') : (project ?? t('work.noProject'))}
           </h1>
-          {project && (
+          {project && tab !== 'batch' && (
             <Button
               type='button'
               variant='outline'
@@ -160,8 +162,11 @@ export function WorkPage() {
         </header>
         <ScrollArea className='min-h-0 flex-1'>
           <div className='mx-auto w-full max-w-5xl px-10 py-8'>
+            {tab === 'batch' && <ProcessTab project={null} batch />}
             {project === null ? (
-              <p className='text-[12px] text-muted-foreground'>{t('work.noProjectHint')}</p>
+              tab !== 'batch' && (
+                <p className='text-[12px] text-muted-foreground'>{t('work.noProjectHint')}</p>
+              )
             ) : (
               <>
                 {/* Kept mounted: the ticked steps and notes survive a tab switch. */}

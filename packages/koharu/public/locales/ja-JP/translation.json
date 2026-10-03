@@ -571,7 +571,8 @@
       "ficha": "Ficha",
       "glossary": "Glossary",
       "corrections": "Corrections",
-      "models": "Models"
+      "models": "Models",
+      "batch": "Batch"
     },
     "next": {
       "process": "Next: run steps 1–6 with the right source language, or add the project to the queue.",
@@ -701,6 +702,23 @@
       "download": "Download",
       "measured": "Measured ({{task}}): {{verdict}}",
       "untested": "Untested."
+    },
+    "batch": {
+      "title": "Batch mode",
+      "intro": "Each folder of images becomes a project named after it, one page per image, and goes through the ticked steps. A project that already exists is used as it is.",
+      "folders": "Folders",
+      "addFolders": "Add folders…",
+      "addInside": "Add the subfolders of…",
+      "addInsideHint": "Pick a folder that holds one work per subfolder",
+      "clear": "Clear",
+      "remove": "Remove {{folder}}",
+      "empty": "Add folders with images (jpg, png or webp).",
+      "exists": "already exists",
+      "studyHint": "Each work is studied with the notes it already has; to give it tags or a description, open it in Process first.",
+      "language": "Language (when the name does not say)",
+      "languageHint": "A name ending in JA, KO, ZH or EN uses that language.",
+      "run": "Process {{count}} folder(s)",
+      "failureHint": "A work that fails is dropped alone; the others go on."
     }
   }
 }

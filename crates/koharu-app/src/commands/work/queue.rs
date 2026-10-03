@@ -574,17 +574,35 @@ async fn run(handle: AppHandle<CefRuntime>, step: Step) {
 
     if code != Some(0) && !step.ignore_error {
         let shown = code.map_or("detenido".to_owned(), |code| format!("código {code}"));
-        queue.log(format!(
-            "!!! '{}' falló ({shown}). Se cancelan los pasos restantes.",
-            step.name()
-        ));
         let mut inner = queue.inner.lock();
         inner.failed = true;
-        inner.steps.clear();
-        // Leave the card free even when a step fails.
-        inner
-            .steps
-            .push_back(Step::khr(None, "Liberar VRAM", &["models", "unload"]).may_fail());
+        // A failed work drops its own steps; the other works go on.
+        if let Some(project) = &step.project {
+            inner
+                .steps
+                .retain(|queued| queued.project.as_ref() != Some(project));
+        }
+        // A shared step (loading a batch's model) fails every work.
+        let others =
+            step.project.is_some() && inner.steps.iter().any(|queued| queued.project.is_some());
+        drop(inner);
+        if others {
+            queue.log(format!(
+                "!!! '{}' falló ({shown}). Se cancela esta obra; las demás siguen.",
+                step.name()
+            ));
+        } else {
+            queue.log(format!(
+                "!!! '{}' falló ({shown}). Se cancelan los pasos restantes.",
+                step.name()
+            ));
+            let mut inner = queue.inner.lock();
+            inner.steps.clear();
+            // Leave the card free even when a step fails.
+            inner
+                .steps
+                .push_back(Step::khr(None, "Liberar VRAM", &["models", "unload"]).may_fail());
+        }
     } else if let Some(project) = &step.project {
         finish(&queue, project, step.after);
     }
