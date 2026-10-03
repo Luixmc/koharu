@@ -245,6 +245,11 @@ impl ProjectLibrary {
             .with_context(|| format!("failed to delete {}", path.display()))
     }
 
+    /// Where the project of that name lives, whether or not it exists yet.
+    pub(crate) fn path(&self, name: &str) -> Result<PathBuf> {
+        Ok(self.resolve(name)?.1)
+    }
+
     fn resolve(&self, name: &str) -> Result<(String, PathBuf)> {
         let name = validate_project_name(name)?;
         Ok((name.clone(), self.root.join(format!("{name}.khrproj"))))

@@ -8,7 +8,7 @@ pub(crate) mod output;
 pub(crate) mod preferences;
 pub(crate) mod processing;
 pub(crate) mod project;
-pub(crate) mod review;
+pub(crate) mod work;
 
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -107,7 +107,33 @@ pub fn bindings() -> tauri_specta::Builder<tauri_runtime_cef::CefRuntime> {
             canvas::commit_erase,
             canvas::commit_transform,
             canvas::commit_inpaint,
-            review::get_review_notes,
+            work::subscribe_queue,
+            work::enqueue,
+            work::learn_from_corrections,
+            work::export_pages,
+            work::read_page_context,
+            work::apply_corrections,
+            work::free_memory,
+            work::create_project_from_folder,
+            work::stop_queue,
+            work::resume_queue,
+            work::discard_unfinished_queue,
+            work::cancel_queued,
+            work::set_shutdown_when_done,
+            work::get_work,
+            work::save_user_notes,
+            work::decide_terms,
+            work::add_term,
+            work::promote_term,
+            work::decide_corrections,
+            work::open_work_file,
+            work::fetch_gallery,
+            work::get_llm_models,
+            work::get_model_choices,
+            work::save_model_choices,
+            work::get_recommendations,
+            work::download_model,
+            work::get_review_notes,
         ])
         .disable_serde_phases()
         .error_handling(ErrorHandlingMode::Throw)

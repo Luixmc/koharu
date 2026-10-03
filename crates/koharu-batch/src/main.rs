@@ -29,7 +29,7 @@ mod obra;
 mod revision;
 
 /// Reports how far a long step has got, as `@progreso <done> <total> <what>`
-/// on stderr. The panel turns these lines into a progress bar with an
+/// on stderr. Koharu turns these lines into a progress bar with an
 /// estimated time left and keeps them out of its log; in a terminal they
 /// read as plain counters.
 pub(crate) fn progress(done: usize, total: usize, what: &str) {
@@ -201,7 +201,7 @@ enum Command {
         solo: Vec<usize>,
 
         /// Skip the pages each stage already finished, to resume a run that
-        /// was cut short (power cut, closed panel) without redoing them.
+        /// was cut short (power cut, closed app) without redoing them.
         #[arg(long)]
         pendientes: bool,
     },
@@ -223,7 +223,7 @@ enum Command {
     },
 
     /// Propose grammar, person and meaning corrections without applying them
-    /// (obras/<obra>/correcciones.tsv, approved in the panel).
+    /// (obras/<obra>/correcciones.tsv, approved in Koharu).
     Revisar {
         #[arg(short, long, value_name = "KHRPROJ")]
         project: PathBuf,
@@ -246,7 +246,7 @@ enum Command {
     },
 
     /// Write every page's balloons in reading order next to the proposals,
-    /// for the panel to show each one in context (revisar already does it).
+    /// for Koharu to show each one in context (revisar already does it).
     Contexto {
         #[arg(short, long, value_name = "KHRPROJ")]
         project: PathBuf,
@@ -256,7 +256,7 @@ enum Command {
         left_to_right: bool,
     },
 
-    /// Write the corrections approved in the panel into the project.
+    /// Write the corrections approved in Koharu into the project.
     Aplicar {
         #[arg(short, long, value_name = "KHRPROJ")]
         project: PathBuf,
@@ -438,6 +438,10 @@ enum ModelsAction {
         /// Model to release; every loaded model when omitted.
         model: Option<String>,
     },
+
+    /// Print, as JSON, the OCR each source language uses and the catalog
+    /// models with what was measured and whether they are installed.
+    Recommend,
 
     /// Show the suggested models and whether they are installed.
     Catalog {
@@ -1961,6 +1965,7 @@ async fn models(action: ModelsAction) -> Result<()> {
             println!("{}", clean_output(&raw));
         }
         ModelsAction::Catalog { task } => show_catalog(task.as_deref())?,
+        ModelsAction::Recommend => println!("{}", recommendations()?),
         ModelsAction::Download { id } => download_model(&id).await?,
         ModelsAction::Remove { id } => remove_model(&id)?,
         ModelsAction::Import {
@@ -1976,13 +1981,16 @@ async fn models(action: ModelsAction) -> Result<()> {
 /// offline and stays versioned with the code that reads it.
 const MODEL_CATALOG: &str = include_str!("../assets/model-catalog.json");
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 struct CatalogEntry {
     id: String,
     repo: String,
     archivo: String,
     gb: f64,
     tareas: Vec<String>,
+    /// Estimates per source language unless `medido` says otherwise.
+    #[serde(default)]
+    idiomas: BTreeMap<String, String>,
     #[serde(default)]
     medido: BTreeMap<String, String>,
     nota: String,
@@ -2014,6 +2022,28 @@ fn installed_path(entry: &CatalogEntry) -> Result<PathBuf> {
         .join(publisher)
         .join(repository)
         .join(&entry.archivo))
+}
+
+fn recommendations() -> Result<String> {
+    let mut ocr = serde_json::Map::new();
+    for idioma in ["ja", "ko", "zh", "en"] {
+        // The OCR's own serialized name, as the settings and --ocr use it.
+        let model = serde_json::to_value(ocr_for_language(idioma)?)?;
+        ocr.insert(idioma.to_owned(), model["model"].clone());
+    }
+    let modelos = catalog()?
+        .modelos
+        .into_iter()
+        .map(|entry| {
+            let instalado = installed_path(&entry)
+                .map(|path| path.exists())
+                .unwrap_or(false);
+            let mut value = serde_json::to_value(&entry)?;
+            value["instalado"] = instalado.into();
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(serde_json::json!({ "ocr": ocr, "modelos": modelos }).to_string())
 }
 
 fn show_catalog(task: Option<&str>) -> Result<()> {

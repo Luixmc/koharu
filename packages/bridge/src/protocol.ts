@@ -76,6 +76,52 @@ export const commands = {
 	commitErase: (expectedRevision: Revision, layer: EntityId, points: Point[], diameter: number) => __TAURI_INVOKE<LayerCommit>("commit_erase", { expectedRevision, layer, points: points.map(i=>i), diameter }),
 	commitTransform: (expectedRevision: Revision, elements: TransformFrame[]) => __TAURI_INVOKE<number | null>("commit_transform", { expectedRevision, elements }).then((v) => (v==null?v:v as typeof v)),
 	commitInpaint: (expectedRevision: Revision, points: Point[], diameter: number) => __TAURI_INVOKE<string | null>("commit_inpaint", { expectedRevision, points: points.map(i=>i), diameter }),
+	subscribeQueue: (onEvent: Channel<QueueEvent>) => __TAURI_INVOKE<QueueSnapshot>("subscribe_queue", { onEvent }).then((v) => (({...v,state:({...v.state,running:v.state.running==null?v.state.running:({...v.state.running,progress:v.state.running.progress==null?v.state.running.progress:({...v.state.running.progress,first:v.state.running.progress.first==null?v.state.running.progress.first:v.state.running.progress.first})})})}) as typeof v)),
+	enqueue: (plan: Plan) => __TAURI_INVOKE<null>("enqueue", { plan }),
+	learnFromCorrections: (project: string, model: string) => __TAURI_INVOKE<null>("learn_from_corrections", { project, model }),
+	/**
+	 *  Renders the finished pages with khr one at a time; exporting every page
+	 *  from memory took the PC down.
+	 */
+	exportPages: (project: string) => __TAURI_INVOKE<null>("export_pages", { project }),
+	/**
+	 *  Proposals made before `revisar` saved the pages around them: reads the
+	 *  pages now (quick, no model).
+	 */
+	readPageContext: (project: string, leftToRight: boolean) => __TAURI_INVOKE<null>("read_page_context", { project, leftToRight }),
+	applyCorrections: (project: string) => __TAURI_INVOKE<null>("apply_corrections", { project }),
+	/**  Frees the LM Studio models. */
+	freeMemory: () => __TAURI_INVOKE<null>("free_memory"),
+	/**  A new project named after a folder, with its images as pages. */
+	createProjectFromFolder: () => __TAURI_INVOKE<null>("create_project_from_folder"),
+	stopQueue: () => __TAURI_INVOKE<null>("stop_queue"),
+	resumeQueue: () => __TAURI_INVOKE<null>("resume_queue"),
+	discardUnfinishedQueue: () => __TAURI_INVOKE<null>("discard_unfinished_queue"),
+	cancelQueued: (project: string) => __TAURI_INVOKE<null>("cancel_queued", { project }),
+	setShutdownWhenDone: (shutdown: boolean) => __TAURI_INVOKE<null>("set_shutdown_when_done", { shutdown }),
+	getWork: (project: string) => __TAURI_INVOKE<Work>("get_work", { project }),
+	saveUserNotes: (project: string, notes: UserNotes) => __TAURI_INVOKE<null>("save_user_notes", { project, notes }),
+	decideTerms: (project: string, terms: Term[], approve: boolean) => __TAURI_INVOKE<null>("decide_terms", { project, terms, approve }),
+	addTerm: (project: string, term: Term) => __TAURI_INVOKE<null>("add_term", { project, term }),
+	promoteTerm: (term: Term) => __TAURI_INVOKE<null>("promote_term", { term }),
+	decideCorrections: (project: string, corrections: Correction[], approve: boolean) => __TAURI_INVOKE<null>("decide_corrections", { project, corrections, approve }),
+	/**  Opens one of the work's files in the program Windows uses for it. */
+	openWorkFile: (project: string, file: WorkFile) => __TAURI_INVOKE<null>("open_work_file", { project, file }),
+	/**
+	 *  Asks `khr etiquetas` for a gallery's title and tags, given its number or
+	 *  its e-hentai or exhentai link.
+	 */
+	fetchGallery: (gallery: string) => __TAURI_INVOKE<Gallery>("fetch_gallery", { gallery }),
+	/**  The LLMs LM Studio has downloaded, by the key `lms load` takes. */
+	getLlmModels: () => __TAURI_INVOKE<string[]>("get_llm_models"),
+	getModelChoices: () => __TAURI_INVOKE<ModelChoices>("get_model_choices"),
+	saveModelChoices: (choices: ModelChoices) => __TAURI_INVOKE<null>("save_model_choices", { choices }),
+	getRecommendations: () => __TAURI_INVOKE<Recommendations>("get_recommendations").then((v) => (({...v,models:v.models.map(i=>i)}) as typeof v)),
+	/**
+	 *  Fetches a catalog model into the LM Studio library, as a queue step so
+	 *  its progress shows in the log.
+	 */
+	downloadModel: (id: string) => __TAURI_INVOKE<null>("download_model", { id }),
 	getReviewNotes: () => __TAURI_INVOKE<ReviewNote[]>("get_review_notes"),
 };
 
@@ -99,6 +145,15 @@ export type AnalysisRegion = {
 	geometry: Geometry,
 	kind: string,
 	label: string | null,
+};
+
+/**  One balloon of a reviewed page, to show proposals within their page. */
+export type Balloon = {
+	page: string,
+	id: string,
+	original: string,
+	translation: string,
+	speaker: string,
 };
 
 export type Bounds = {
@@ -127,6 +182,19 @@ export type CanvasState = {
 	element_frames: TransformFrame[],
 };
 
+/**  A model of khr's catalog of suggested LM Studio models. */
+export type CatalogModel = {
+	id: string,
+	tasks: string[],
+	gb: number,
+	/**  Per source language; "?" until measured. */
+	languages: { [key in string]: string },
+	/**  What the test bench measured, per task. */
+	measured: { [key in string]: string },
+	note: string,
+	installed: boolean,
+};
+
 export type ClaudeConfig = Record<string, never>;
 
 export type CodexModel = {
@@ -138,6 +206,18 @@ export type CodexModel = {
 export type Config = {
 	model: string | null,
 	reasoning: Reasoning,
+};
+
+/**  One correction proposed by `khr revisar`. */
+export type Correction = {
+	id: string,
+	page: string,
+	original: string,
+	current: string,
+	proposal: string,
+	reason: string,
+	/**  Who the reviewer took to be speaking and to whom, with its doubt. */
+	speaker: string,
 };
 
 export type CredentialInput = {
@@ -229,6 +309,13 @@ export type Frame = {
 	angle_degrees: number,
 };
 
+/**  What an e-hentai gallery says about the work. */
+export type Gallery = {
+	title: string,
+	original_title: string,
+	tags: string[],
+};
+
 export type GeminiConfig = Record<string, never>;
 
 export type GenerationConfig = {
@@ -295,6 +382,8 @@ export type KoharuLayoutRFDetrSeg2XLConfig = {
 	comic_text_detector?: boolean | null,
 };
 
+export type KoharuStage = "detection" | "ocr" | "inpainting";
+
 export type LanguageChoice = {
 	tag: string,
 	name: string,
@@ -331,6 +420,15 @@ export type Model = {
 	reasoning: boolean,
 };
 
+/**  The LM Studio model each step uses, remembered between runs. */
+export type ModelChoices = {
+	study: string,
+	translation: string,
+	/**  Translate with DeepL instead of the translation model. */
+	deepl: boolean,
+	review: string,
+};
+
 export type ModelResources = {
 	process_memory: number,
 	system_memory: number,
@@ -346,6 +444,9 @@ export type ModelSelection = {
 	reasoning?: boolean,
 };
 
+/**  What the work needs next, from what its folder holds. */
+export type NextStep = { kind: "process" } | { kind: "proposals"; count: number } | { kind: "corrections"; count: number } | { kind: "apply" } | { kind: "finish" };
+
 export type OcrModel = { model: "paddleocr-vl-1.6" } | { model: "manga-ocr" } | { model: "baberu-ocr" } | { model: "hayai-ocr" };
 
 export type OpenAiCompatibleConfig = {
@@ -357,6 +458,8 @@ export type OpenAiConfig = Record<string, never>;
 export type OpenRouterConfig = Record<string, never>;
 
 export type Operation = { operation: "full" } | { operation: "through"; stage: Stage } | { operation: "only"; stage: Stage } | { operation: "stages"; stages: Stage[] };
+
+export type Outcome = "proposals" | "corrections" | "created";
 
 export type Page = {
 	id: EntityId,
@@ -403,6 +506,23 @@ export type PipelineConfig = {
 	processor: ProcessorConfig,
 };
 
+export type Plan = {
+	project: string,
+	stages: KoharuStage[],
+	/**  Step 4: read the whole work and write its ficha and term proposals. */
+	study: boolean,
+	/**  e-hentai gallery whose tags are fetched right before the study. */
+	gallery: string,
+	notes: UserNotes,
+	translate: boolean,
+	review: boolean,
+	models: ModelChoices,
+	/**  Only the first pages; 0 is every page. */
+	pages: number,
+	language: SourceLanguage,
+	left_to_right: boolean,
+};
+
 export type Point = {
 	x: number,
 	y: number,
@@ -419,6 +539,11 @@ export type ProcessorConfig = {
 	"koharu-layout-rfdetr-seg-2xl"?: KoharuLayoutRFDetrSeg2XLConfig | null,
 	"flux2-klein"?: Flux2KleinConfig | null,
 	"rorem-mixed"?: RoremMixedConfig | null,
+};
+
+export type ProgressStart = {
+	at: number,
+	done: number,
 };
 
 export type ProjectInfo = {
@@ -453,9 +578,39 @@ export type Quantization = {
 	downloaded: boolean,
 };
 
+export type QueueEvent = { type: "state"; state: QueueState } | { type: "lines"; lines: string[] } | { type: "cleared" } | 
+/**  The work files of a project changed. */
+{ type: "work_changed"; project: string } | 
+/**  A step left something for the user to look at. */
+{ type: "finished"; project: string; outcome: Outcome };
+
+export type QueueSnapshot = {
+	state: QueueState,
+	log: string[],
+};
+
+export type QueueState = {
+	running: RunningStep | null,
+	/**  Projects with steps queued that have not started, in order. */
+	waiting: string[],
+	/**  Projects with steps running or queued; the editor leaves them alone. */
+	busy: string[],
+	/**  Steps a previous run left unfinished, offered for resuming. */
+	unfinished: number,
+	unfinished_projects: string[],
+	failed: boolean,
+	shutdown_when_done: boolean,
+};
+
 export type RasterLayerKind = "cleanup" | "paint";
 
 export type Reasoning = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+
+/**  What khr recommends: the OCR each source language uses and its catalog. */
+export type Recommendations = {
+	ocr: { [key in string]: string },
+	models: CatalogModel[],
+};
 
 /**
  *  One balloon the reviewer has something to say about, keyed by the id of
@@ -467,7 +622,7 @@ export type ReviewNote = {
 	speaker: string | null,
 	/**  Why the reviewer is unsure of that reading. */
 	doubt: string | null,
-	/**  A correction awaiting approval in the panel. */
+	/**  A correction awaiting approval. */
 	proposal: string | null,
 	reason: string | null,
 };
@@ -481,10 +636,21 @@ export type RoremMixedConfig = {
 
 export type RunId = string;
 
+export type RunningStep = {
+	name: string,
+	project: string | null,
+	/**  Epoch milliseconds. */
+	started: number,
+	progress: StepProgress | null,
+};
+
 export type Scope = { scope: "project" } | { scope: "pages"; value: EntityId[] } | { scope: "region"; value: {
 	page: EntityId,
 	bounds: Bounds,
 } } | { scope: "entities"; value: EntityId[] };
+
+/**  Source languages; khr picks the OCR that reads each one best. */
+export type SourceLanguage = "ja" | "ko" | "zh" | "en";
 
 export type SourceText = {
 	text: string,
@@ -497,6 +663,26 @@ export type StartupState = {
 	preferences: Preferences,
 	jobs: Job[],
 	canvas: CanvasState,
+};
+
+/**  How far the running step has got, from khr's `@progreso` lines. */
+export type StepProgress = {
+	what: string,
+	done: number,
+	total: number,
+	/**
+	 *  When the count first went up (epoch ms) and to what: the pace since
+	 *  then estimates the time left, so loading the model before the first
+	 *  unit does not skew it.
+	 */
+	first: ProgressStart | null,
+};
+
+/**  One glossary line: original, rendering and an optional note. */
+export type Term = {
+	source: string,
+	target: string,
+	note: string,
 };
 
 export type TextAlignment = "Start" | "Center" | "End" | "Justify";
@@ -551,6 +737,25 @@ export type TypographyUpdate = {
 	layer: EntityId,
 	typography: Typography,
 };
+
+/**  Tags and a short description the user gives `khr estudiar` to start from. */
+export type UserNotes = {
+	tags: string[],
+	description: string,
+};
+
+export type Work = {
+	ficha: string | null,
+	notes: UserNotes,
+	proposals: Term[],
+	terms: Term[],
+	corrections: Correction[],
+	approved_corrections: number,
+	balloons: Balloon[],
+	next: NextStep,
+};
+
+export type WorkFile = "ficha" | "glossary" | "global_glossary" | "folder";
 
 export type WritingMode = "Horizontal" | "Vertical";
 

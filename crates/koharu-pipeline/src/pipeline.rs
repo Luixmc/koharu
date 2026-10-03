@@ -67,6 +67,12 @@ impl Pipeline {
         })
     }
 
+    /// Frees every stage model; each loads again on its next use. Lets
+    /// another process have the accelerator.
+    pub fn unload(&self) {
+        self.current.load().unload_all();
+    }
+
     pub fn subscribe_resources(&self) -> tokio::sync::watch::Receiver<ResourceSnapshot> {
         self.resources.start();
         self.resources.subscribe()

@@ -20,6 +20,12 @@ pub(crate) struct StageRunner {
 }
 
 impl StageRunner {
+    pub(crate) fn unload_all(&self) {
+        for stage in crate::Stage::ALL {
+            self.stages.unload(stage);
+        }
+    }
+
     pub(crate) fn new(
         config: &PipelineConfig,
         translator: koharu_translator::Translator,

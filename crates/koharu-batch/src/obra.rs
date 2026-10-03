@@ -25,7 +25,7 @@ pub const WORKS_DIR: &str = r"I:\Koharu\obras";
 pub const GLOBAL_GLOSSARY: &str = r"I:\Koharu\glosario.tsv";
 const SOURCE_SLANG_DIR: &str = r"I:\Koharu\jerga-origen";
 
-/// Folder name for a project; the panel derives the same name.
+/// Folder name for a project; Koharu derives the same name.
 pub fn slug(project: &Path) -> String {
     project
         .file_stem()
@@ -163,7 +163,7 @@ impl Work {
         if added > 0 {
             self.ensure_dir()?;
             let header = "# Propuestas pendientes: original<TAB>traducción<TAB>nota\n\
-                          # Apruébalas o recházalas desde el panel.\n";
+                          # Apruébalas o recházalas desde Koharu.\n";
             std::fs::write(
                 self.proposals_path(),
                 format!("{header}{}", pending.to_tsv()),

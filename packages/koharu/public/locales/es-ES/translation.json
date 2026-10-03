@@ -263,7 +263,8 @@
     "undo": "Deshacer",
     "view": "Ver",
     "canvasView": "Lienzo",
-    "textView": "Texto lado a lado"
+    "textView": "Texto lado a lado",
+    "work": "Obra: ficha, glosario y cola…"
   },
   "model": {
     "baseUrl": "URL base",
@@ -554,5 +555,152 @@
     "doubt": "El revisor duda: {{doubt}}",
     "proposal": "Propuesta: «{{proposal}}»",
     "useProposal": "Usar"
+  },
+  "work": {
+    "button": "Obra",
+    "back": "Volver",
+    "project": "Proyecto",
+    "noProject": "Ningún proyecto",
+    "noProjectHint": "Crea un proyecto o elige uno para procesarlo, estudiarlo y revisar su traducción.",
+    "fromFolder": "Nuevo desde carpeta…",
+    "fromFolderHint": "Crea un proyecto con las imágenes de una carpeta, una página por imagen",
+    "edit": "Abrir en el editor",
+    "editBusy": "khr está trabajando en este proyecto; espera a sus pasos o quítalo de la cola",
+    "tabs": {
+      "process": "Procesar",
+      "ficha": "Ficha",
+      "glossary": "Glosario",
+      "corrections": "Correcciones",
+      "models": "Modelos"
+    },
+    "next": {
+      "process": "Siguiente: pasos 1-6 con el idioma original correcto, o añade el proyecto a la cola.",
+      "proposals": "Siguiente: aprueba o rechaza {{count}} término(s) en Glosario; si cambias alguno, vuelve a traducir (paso 5).",
+      "corrections": "Siguiente: revisa {{count}} corrección(es) en Correcciones.",
+      "apply": "Siguiente: aplica las correcciones aprobadas en Correcciones.",
+      "finish": "Siguiente: abre el proyecto en el editor, revisa y exporta. Si corriges a mano, usa «Aprender de mis correcciones» para alimentar el glosario."
+    },
+    "approve": "Aprobar",
+    "reject": "Rechazar",
+    "approveAll": "Aprobar todas",
+    "rejectAll": "Rechazar todas",
+    "languages": {
+      "ja": "Japonés",
+      "ko": "Coreano",
+      "zh": "Chino",
+      "en": "Inglés"
+    },
+    "queue": {
+      "idle": "Nada en curso",
+      "failed": "La última ejecución terminó con errores; mira el registro",
+      "shutdown": "Apagar el PC al terminar",
+      "stop": "Detener",
+      "waiting": "En cola:",
+      "remove": "Quitar {{project}} de la cola",
+      "unmeasured": "{{elapsed}} transcurridos (sin avance medible)",
+      "estimating": "calculando el tiempo…",
+      "left": "quedan ~{{left}}",
+      "progress": "{{what}}: {{done}} de {{total}} · {{elapsed}} transcurridos · {{left}}"
+    },
+    "process": {
+      "unfinished": "Quedó una cola sin terminar: {{count}} paso(s) de {{projects}}.",
+      "resume": "Reanudar",
+      "discard": "Descartar",
+      "steps": "Pasos (en orden)",
+      "stage": {
+        "detection": "1. Detectar globos",
+        "ocr": "2. Reconocer texto (OCR)",
+        "inpainting": "3. Borrar texto original"
+      },
+      "study": "4. Estudiar la obra (ficha y términos)",
+      "notesHint": "Antes de la ficha (opcional); la IA lo compara con lo que lee:",
+      "galleryPlaceholder": "Nº o enlace de galería e-hentai o exhentai",
+      "fetchTags": "Traer etiquetas",
+      "tagsPlaceholder": "Etiquetas, separadas por comas",
+      "descriptionPlaceholder": "Descripción breve: de qué va, quién es quién, tono",
+      "titleNote": "Título: {{title}}",
+      "translate": "5. Traducir",
+      "review": "6. Revisar la traducción (propone correcciones)",
+      "options": "Opciones",
+      "studyModel": "Ficha (paso 4)",
+      "translationModel": "Traducción (paso 5)",
+      "reviewModel": "Revisión (paso 6)",
+      "deepl": "DeepL (en línea)",
+      "recommended": "medido",
+      "unmeasured": "En el catálogo, aún sin medir.",
+      "notInCatalog": "No está en el catálogo de khr.",
+      "suggested": "Medidos y sin instalar: {{models}}",
+      "language": "Idioma original",
+      "ocrHint": "khr lee este idioma con {{ocr}}.",
+      "pages": "Páginas (0 = todas)",
+      "leftToRight": "Leer de izquierda a derecha (desmarcado = manga)",
+      "run": "Ejecutar",
+      "enqueue": "Añadir a la cola",
+      "learn": "Aprender de mis correcciones",
+      "learnHint": "Propone términos del glosario a partir de lo que corregiste a mano",
+      "export": "Exportar páginas",
+      "exportHint": "PNG terminadas en I:\\Koharu\\output\\<proyecto>",
+      "freeMemory": "Liberar VRAM",
+      "log": "Registro",
+      "emptyLog": "Aquí sale lo que escriben los pasos."
+    },
+    "ficha": {
+      "openExternal": "Abrir ficha.md",
+      "openFolder": "Abrir la carpeta de la obra",
+      "yourNotes": "Tus notas",
+      "emptyTitle": "Aún no hay ficha",
+      "emptyDescription": "La escribe el paso 4 (Estudiar la obra): personajes, relaciones y tono, comparados con las etiquetas y la descripción que des."
+    },
+    "glossary": {
+      "summary": "{{approved}} término(s) aprobados en esta obra; {{pending}} propuesta(s) pendientes.",
+      "openWork": "Glosario de la obra",
+      "openGlobal": "Glosario global",
+      "proposals": "Propuestas",
+      "noProposals": "No hay propuestas. Estudia la obra o aprende de tus correcciones.",
+      "editHint": "Puedes corregir la traducción antes de aprobarla.",
+      "rendering": "Traducción de {{source}}",
+      "terms": "Términos de esta obra",
+      "termsHint": "Mandan sobre el glosario global dentro de esta obra; pasa al global los que sirvan para otras.",
+      "toGlobal": "Al global"
+    },
+    "corrections": {
+      "summary": "{{pending}} pendiente(s); {{approved}} aprobada(s) sin aplicar.",
+      "apply": "Aplicar las aprobadas",
+      "applyHint": "Escribe en el proyecto las correcciones aprobadas; mientras, se cierra en el editor",
+      "newTermHint": "Nuevo término del glosario: recorta el original a la palabra o frase que se repite.",
+      "termSource": "Original",
+      "termTarget": "Traducción",
+      "termNote": "Aprobado desde una corrección.",
+      "saveTerm": "Guardar término",
+      "empty": "No hay correcciones pendientes. Las propone el paso 6 (Revisar la traducción).",
+      "legendBefore": "La página entera en orden de lectura:",
+      "legendRemoved": "lo que se quita",
+      "legendAdded": "lo que entra",
+      "context": "Leer las páginas",
+      "contextHint": "Estas propuestas son de antes de que el revisor guardara sus páginas; las lee ahora, sin modelo",
+      "page": "Página {{page}}",
+      "untranslated": "Sin traducir",
+      "now": "Ahora:",
+      "becomes": "Queda:",
+      "proposal": "Propuesta",
+      "approveAndTerm": "Aprobar + glosario",
+      "doubt": "El revisor no está seguro: {{doubt}}",
+      "speaker": "Quién habla y a quién, según el revisor"
+    },
+    "models": {
+      "unavailable": "khr no pudo dar sus recomendaciones.",
+      "ocrTitle": "OCR por idioma original",
+      "ocrDescription": "khr elige el OCR según el idioma marcado en Procesar, tras leer la misma obra en los cuatro idiomas con cada motor.",
+      "llmTitle": "Modelos de LM Studio",
+      "llmDescription": "El catálogo de khr. Solo lo que midió su banco de pruebas se muestra como resultado; lo demás está sin probar.",
+      "task": {
+        "traducir": "traducir",
+        "corregir": "corregir"
+      },
+      "installed": "Instalado",
+      "download": "Descargar",
+      "measured": "Medido ({{task}}): {{verdict}}",
+      "untested": "Sin probar."
+    }
   }
 }

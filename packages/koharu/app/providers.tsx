@@ -19,6 +19,7 @@ import {
   receiveResources,
   useKoharuStore,
 } from '@/lib/store'
+import { subscribeQueue } from '@/lib/work'
 import {
   commands,
   type CanvasState,
@@ -45,6 +46,7 @@ export function Providers({ children }: { children: ReactNode }) {
         })
 
       void refreshTranslationModels().catch(() => undefined)
+      void subscribeQueue(() => lifecycle.active).catch(() => undefined)
 
       void commands
         .subscribe(

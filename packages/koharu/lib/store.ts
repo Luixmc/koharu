@@ -57,6 +57,8 @@ interface KoharuStore {
   processingScope: PipelineScope
   processingStages: Stage[]
   settingsOpen: boolean
+  /** The work page: khr's steps, the ficha, glossary and corrections. */
+  workOpen: boolean
   shortcuts: Shortcuts
   /** Page images retracted: the canvas is covered and thumbnails are not drawn. */
   discreet: boolean
@@ -66,6 +68,7 @@ interface KoharuStore {
   setProcessingScope: (scope: PipelineScope) => void
   setProcessingStages: (stages: Stage[]) => void
   setSettingsOpen: (open: boolean) => void
+  setWorkOpen: (open: boolean) => void
   setDiscreet: (discreet: boolean) => void
   setCenterView: (view: CenterView) => void
   selectLayers: (layers: EntityId[]) => void
@@ -112,6 +115,7 @@ export const useKoharuStore = create<KoharuStore>()((set) => ({
   processingScope: 'selected-pages',
   processingStages: [...pipelineStages],
   settingsOpen: false,
+  workOpen: false,
   shortcuts: defaultShortcuts,
   discreet: readFlag(discreetKey),
   centerView: 'canvas',
@@ -120,6 +124,7 @@ export const useKoharuStore = create<KoharuStore>()((set) => ({
   setProcessingScope: (processingScope) => set({ processingScope }),
   setProcessingStages: (processingStages) => set({ processingStages }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setWorkOpen: (workOpen) => set({ workOpen }),
   setDiscreet: (discreet) => {
     writeFlag(discreetKey, discreet)
     set({ discreet })

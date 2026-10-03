@@ -5,13 +5,13 @@
 //! for real errors: grammar, the wrong person or subject, a meaning the
 //! original does not carry, an ignored glossary term, words left untranslated.
 //! Nothing is written to the project. The proposals land in `correcciones.tsv`
-//! for the user to approve or reject in the panel, because the rewriting
+//! for the user to approve or reject in Koharu, because the rewriting
 //! corrector this replaces cost more good lines than it fixed.
 //!
 //! `aplicar` then writes the approved ones, as the user's own text.
 //!
 //! Next to the proposals goes `revision-paginas.tsv`, every balloon of every
-//! page in reading order, so the panel can show a proposal with the rest of
+//! page in reading order, so Koharu can show a proposal with the rest of
 //! its page around it: a line is hard to judge alone.
 //!
 //! The model first says who speaks each balloon and to whom, starting from
@@ -470,7 +470,7 @@ pub async fn review(
 
     let mut text = String::from(
         "# Correcciones propuestas: id\tpágina\toriginal\tactual\tpropuesta\tmotivo\thabla\n\
-         # Apruébalas o recházalas desde el panel.\n",
+         # Apruébalas o recházalas desde Koharu.\n",
     );
     for p in &found {
         text.push_str(&format!(
@@ -548,7 +548,7 @@ pub async fn apply(project: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Puts the applied text into the page context, so the panel does not show
+/// Puts the applied text into the page context, so Koharu does not show
 /// the old line around the next proposals.
 fn refresh_context(work: &Work, applied: &BTreeMap<String, String>) -> Result<()> {
     let Ok(text) = std::fs::read_to_string(context_path(work)) else {

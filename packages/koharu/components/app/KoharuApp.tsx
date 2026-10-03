@@ -7,6 +7,7 @@ import { TitleBar } from '@/components/app/TitleBar'
 import { Editor } from '@/components/editor/Editor'
 import { SettingsPage } from '@/components/preferences/SettingsPage'
 import { StartView } from '@/components/start/StartView'
+import { WorkPage } from '@/components/work/WorkPage'
 import { useProject } from '@/lib/queries'
 import { useKoharuStore } from '@/lib/store'
 import { cn } from '@koharu/ui/lib/utils'
@@ -19,8 +20,9 @@ export function KoharuApp() {
   const selectLayers = useKoharuStore((state) => state.selectLayers)
   const projectLoaded = project !== undefined
   const settingsOpen = useKoharuStore((state) => state.settingsOpen)
+  const workOpen = useKoharuStore((state) => state.workOpen)
   const activePage = project?.active_page
-  const editorOpen = project !== undefined && project !== null && !settingsOpen
+  const editorOpen = project !== undefined && project !== null && !settingsOpen && !workOpen
 
   useEffect(() => {
     // Ctrl+H retracts the images from anywhere, even while typing; Ctrl+T
@@ -57,6 +59,8 @@ export function KoharuApp() {
       <TitleBar />
       {settingsOpen ? (
         <SettingsPage />
+      ) : workOpen ? (
+        <WorkPage />
       ) : project === undefined ? (
         <main className='grid min-h-0 flex-1 place-items-center bg-[var(--surface-canvas)]'>
           <div className='flex items-center gap-3 text-[12px] text-muted-foreground'>

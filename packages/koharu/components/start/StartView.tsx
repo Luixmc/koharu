@@ -1,6 +1,6 @@
 'use client'
 
-import { Folder, FolderPlus, Plus, Settings, Trash2 } from 'lucide-react'
+import { BookOpen, Folder, FolderPlus, Plus, Settings, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@koharu/ui/components/t
 export function StartView() {
   const { t } = useTranslation()
   const setSettingsOpen = useKoharuStore((state) => state.setSettingsOpen)
+  const setWorkOpen = useKoharuStore((state) => state.setWorkOpen)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [name, setName] = useState('')
   const [busy, setBusy] = useState<string | null>('list')
@@ -96,7 +97,7 @@ export function StartView() {
             className='mx-auto flex min-h-full w-full max-w-[960px] flex-col px-6 py-10 sm:px-10 sm:py-14'
             aria-labelledby='start-title'
           >
-            <header className='flex items-start justify-between gap-6'>
+            <header className='flex items-start gap-3'>
               <div>
                 <h1 id='start-title' className='text-[24px] font-semibold tracking-[-0.03em]'>
                   {t('start.title')}
@@ -105,6 +106,15 @@ export function StartView() {
                   {t('start.description')}
                 </p>
               </div>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                className='ml-auto h-8 shrink-0 gap-1.5 text-[11px]'
+                onClick={() => setWorkOpen(true)}
+              >
+                <BookOpen className='size-3.5' /> {t('work.button')}
+              </Button>
               <Tooltip>
                 <TooltipTrigger
                   render={

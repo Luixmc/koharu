@@ -1,7 +1,7 @@
 'use client'
 
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Eye, EyeOff, FilePlus2, FolderOpen, LoaderCircle, Settings } from 'lucide-react'
+import { BookOpen, Eye, EyeOff, FilePlus2, FolderOpen, LoaderCircle, Settings } from 'lucide-react'
 import Image from 'next/image'
 import { useState, type ComponentProps } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -22,6 +22,7 @@ import {
   useProject,
 } from '@/lib/queries'
 import { useKoharuStore } from '@/lib/store'
+import { useWorkStore } from '@/lib/work'
 import { commands, type Operation, type Scope, type Stage } from '@koharu/bridge/protocol'
 import {
   Menubar,
@@ -50,6 +51,9 @@ export function TitleBar() {
   const selectedLayers = useKoharuStore((state) => state.selectedLayers)
   const selectLayers = useKoharuStore((state) => state.selectLayers)
   const setSettingsOpen = useKoharuStore((state) => state.setSettingsOpen)
+  const workOpen = useKoharuStore((state) => state.workOpen)
+  const setWorkOpen = useKoharuStore((state) => state.setWorkOpen)
+  const queueRunning = useWorkStore((state) => state.queue?.running != null)
   const requestCanvasFit = useKoharuStore((state) => state.requestCanvasFit)
   const discreet = useKoharuStore((state) => state.discreet)
   const setDiscreet = useKoharuStore((state) => state.setDiscreet)
@@ -66,6 +70,12 @@ export function TitleBar() {
     void call(commands.process, scope, operation).catch(() => undefined)
 
   const closeProject = () => void call(commands.closeProject).catch(() => undefined)
+
+  // The work page opens on the project being edited.
+  const openWork = () => {
+    if (project) useWorkStore.getState().setProject(project.name)
+    setWorkOpen(!workOpen)
+  }
 
   return (
     <>
@@ -222,6 +232,11 @@ export function TitleBar() {
                 {t('menu.processLayers')}
               </MenubarItem>
               <MenubarSeparator />
+              <MenubarItem onClick={openWork}>
+                <BookOpen />
+                {t('menu.work')}
+              </MenubarItem>
+              <MenubarSeparator />
               {(['detection', 'ocr', 'translation', 'inpainting'] as Stage[]).map((stage) => (
                 <MenubarItem
                   key={stage}
@@ -299,6 +314,23 @@ export function TitleBar() {
           )}
         </div>
 
+        <button
+          type='button'
+          aria-pressed={workOpen}
+          title={t('menu.work')}
+          onClick={openWork}
+          className={cn(
+            'relative z-10 mr-1 flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] text-muted-foreground transition-colors hover:bg-primary/10',
+            workOpen && 'bg-primary/10 text-primary',
+          )}
+        >
+          {queueRunning ? (
+            <LoaderCircle className='size-3.5 animate-spin text-primary' />
+          ) : (
+            <BookOpen className='size-3.5' />
+          )}
+          {t('work.button')}
+        </button>
         <button
           type='button'
           aria-pressed={discreet}
